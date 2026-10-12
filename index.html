@@ -118,7 +118,7 @@ dialog::backdrop{background:rgba(0,0,0,.4)}
 .pk-wrap{display:flex;gap:4px}
 .pk-wrap .pk-in{flex:1;min-width:0}
 .pk-arrow{padding:4px 12px;font-size:16px;line-height:1}
-.pk-list{border:1px solid var(--line);border-radius:8px;background:var(--card);max-height:210px;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.pk-list{position:fixed;z-index:3000;left:0;top:0;border:1px solid var(--line);border-radius:8px;background:var(--card);overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;box-shadow:0 6px 18px rgba(0,0,0,.28)}
 .pk-list[hidden]{display:none}
 .pk-opt{padding:9px 12px;border-bottom:1px solid var(--line);cursor:pointer;font-size:15px;color:var(--text)}
 .pk-opt:last-child{border-bottom:none}
@@ -308,6 +308,7 @@ function pickVal(boxId){
   const box=$(boxId), inp=box&&box.querySelector(".pk-in");
   return inp?inp.value.trim():"";
 }
+const pkOpen=new Set();   // いま開いている候補一覧
 function pkRender(box,typed){
   const inp=box.querySelector(".pk-in"), list=box.querySelector(".pk-list");
   const q=pkNorm(inp.value.trim()), cur=inp.value.trim();
@@ -317,28 +318,60 @@ function pkRender(box,typed){
   if(cur&&!typed) html+=`<div class="pk-opt pk-clear" data-v="">（未選択にする）</div>`;   // 絞り込み中は出さない
   html+=shown.map(s=>`<div class="pk-opt${s===cur?" cur":""}" role="option" data-v="${esc(s)}">${esc(s)}</div>`).join("");
   if(!shown.length) html+=`<div class="pk-none">${all.length?"一致する候補がありません。入力した文字が、そのまま使われます。":"候補がまだありません。入力した文字が、そのまま使われます。"}</div>`;
-  list.innerHTML=html; list.hidden=false; inp.setAttribute("aria-expanded","true");
-  box.dataset.hl="-1";
+  list.innerHTML=html; list.style.maxHeight=""; list.hidden=false; inp.setAttribute("aria-expanded","true");
+  box.dataset.hl="-1"; pkOpen.add(box); pkPlace(box);
 }
-function pkClose(box){ const l=box.querySelector(".pk-list"); if(l){ l.hidden=true; } const i=box.querySelector(".pk-in"); if(i) i.setAttribute("aria-expanded","false"); }
-function pkChoose(box,v){
-  const inp=box.querySelector(".pk-in"); inp.value=v; pkClose(box);
+/* 候補一覧は入力欄に重ねて表示する（下の欄を押し下げない）。下が狭ければ上向きに開き、一覧の中だけスクロールする */
+function pkPlace(box){
+  const list=box.querySelector(".pk-list"); if(!list||list.hidden) return;
+  const r=box.querySelector(".pk-wrap").getBoundingClientRect();
+  const vv=window.visualViewport, top0=vv?vv.offsetTop:0, vh=vv?vv.height:window.innerHeight;
+  const below=top0+vh-r.bottom-8, above=r.top-top0-8;
+  const want=Math.min(list.scrollHeight,260);
+  const useBelow = below>=Math.min(want,160) || below>=above;
+  const maxH=Math.max(80,Math.min(260,useBelow?below:above));
+  list.style.left=r.left+"px"; list.style.width=r.width+"px"; list.style.maxHeight=maxH+"px";
+  const hgt=Math.min(list.scrollHeight,maxH);
+  list.style.top=(useBelow? r.bottom+2 : r.top-hgt-2)+"px";
 }
+function pkClose(box){
+  const l=box.querySelector(".pk-list"); if(l) l.hidden=true;
+  const i=box.querySelector(".pk-in"); if(i) i.setAttribute("aria-expanded","false");
+  box.dataset.touch=""; pkOpen.delete(box);
+}
+function pkChoose(box,v){ box.querySelector(".pk-in").value=v; pkClose(box); }
 function pkMove(box,d){
   const opts=[...box.querySelectorAll(".pk-list .pk-opt")]; if(!opts.length) return;
   let i=parseInt(box.dataset.hl||"-1",10); i=(i+d+opts.length)%opts.length; box.dataset.hl=String(i);
   opts.forEach((o,k)=>o.classList.toggle("hl",k===i)); opts[i].scrollIntoView({block:"nearest"});
 }
+const pkReplace=()=>pkOpen.forEach(pkPlace);
+window.addEventListener("resize",pkReplace);
+if(window.visualViewport){ window.visualViewport.addEventListener("resize",pkReplace); window.visualViewport.addEventListener("scroll",pkReplace); }
+document.addEventListener("scroll",e=>{ if(e.target&&e.target.closest&&e.target.closest(".pk-list")) return; pkReplace(); },true);
 document.addEventListener("focusin",e=>{ const i=e.target; if(i.classList&&i.classList.contains("pk-in")) pkRender(i.closest(".pickbox"),false); });
-document.addEventListener("focusout",e=>{ const i=e.target; if(i.classList&&i.classList.contains("pk-in")){ const box=i.closest(".pickbox"); setTimeout(()=>{ if(!box.contains(document.activeElement)) pkClose(box); },0); } });
+document.addEventListener("focusout",e=>{
+  const i=e.target; if(!(i.classList&&i.classList.contains("pk-in"))) return;
+  const box=i.closest(".pickbox");
+  setTimeout(()=>{ if(!box.contains(document.activeElement) && !box.dataset.touch) pkClose(box); },0);   // 一覧を指で触っている間は閉じない
+});
 document.addEventListener("input",e=>{ const i=e.target; if(i.classList&&i.classList.contains("pk-in")) pkRender(i.closest(".pickbox"),true); });
 document.addEventListener("pointerdown",e=>{
-  const opt=e.target.closest&&e.target.closest(".pk-opt"), arrow=e.target.closest&&e.target.closest(".pk-arrow");
-  if(opt){ e.preventDefault(); pkChoose(opt.closest(".pickbox"),opt.dataset.v); }
-  else if(arrow){
+  const t=e.target; if(!t.closest) return;
+  const inList=t.closest(".pk-list"), arrow=t.closest(".pk-arrow");
+  if(inList){ inList.closest(".pickbox").dataset.touch="1"; return; }     // 一覧のスクロール開始：選択はしない（指を離したときの「タップ」で選ぶ）
+  if(arrow){
     e.preventDefault(); const box=arrow.closest(".pickbox"), inp=box.querySelector(".pk-in");
     if(box.querySelector(".pk-list").hidden){ inp.focus(); pkRender(box,false); } else pkClose(box);
+    return;
   }
+  [...pkOpen].forEach(box=>{ if(!t.closest(".pickbox")||t.closest(".pickbox")!==box) pkClose(box); });   // 外側をタップしたら閉じる
+});
+document.addEventListener("pointerup",()=>{ pkOpen.forEach(b=>{ b.dataset.touch=""; }); });
+document.addEventListener("pointercancel",()=>{ pkOpen.forEach(b=>{ b.dataset.touch=""; }); });
+document.addEventListener("click",e=>{
+  const opt=e.target.closest&&e.target.closest(".pk-opt"); if(!opt) return;
+  pkChoose(opt.closest(".pickbox"),opt.dataset.v);                          // タップ（スクロールではない）で選択
 });
 document.addEventListener("keydown",e=>{
   const i=e.target; if(!(i.classList&&i.classList.contains("pk-in"))) return;
