@@ -114,8 +114,18 @@ dialog::backdrop{background:rgba(0,0,0,.4)}
 .syncbar.err{color:var(--ng)}
 .syncbox{border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:12px}
 .syncbox h3{margin:0 0 6px;font-size:15px}
-.pickbox{display:flex;flex-direction:column;gap:4px}
-.pickbox[hidden]{display:none}
+.pickbox{display:flex;flex-direction:column;gap:4px;position:relative}
+.pk-wrap{display:flex;gap:4px}
+.pk-wrap .pk-in{flex:1;min-width:0}
+.pk-arrow{padding:4px 12px;font-size:16px;line-height:1}
+.pk-list{border:1px solid var(--line);border-radius:8px;background:var(--card);max-height:210px;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.pk-list[hidden]{display:none}
+.pk-opt{padding:9px 12px;border-bottom:1px solid var(--line);cursor:pointer;font-size:15px;color:var(--text)}
+.pk-opt:last-child{border-bottom:none}
+.pk-opt.cur{font-weight:700;color:var(--accent)}
+.pk-opt.hl,.pk-opt:hover{background:var(--accent-bg)}
+.pk-opt.pk-clear{color:var(--sub);font-size:13px}
+.pk-none{padding:9px 12px;color:var(--sub);font-size:13px}
 textarea.lsarea{min-height:96px;resize:vertical;font-size:15px}
 </style>
 </head>
@@ -124,7 +134,6 @@ textarea.lsarea{min-height:96px;resize:vertical;font-size:15px}
   <h1>PC在庫管理 <span class="muted">（サービスタグで機種ごとに管理）</span></h1>
   <p class="lead">スマホのカメラでサービスタグを読み取り、機種ごとに集計します。</p>
   <div class="syncbar" id="syncBar"></div>
-  <div class="banner" id="demoBanner">最初に入っている機種・タグはすべて架空のサンプルです。実際に使い始める前に「データ」タブの「すべて空にする」で消してください。データはこの端末のブラウザの中だけに保存され、外部には送信されません。</div>
   <div class="banner backup" id="backupBanner" hidden></div>
 
   <div class="stats" id="stats"></div>
@@ -228,6 +237,14 @@ function sampleData(){
   ];
   return {items, log:[{t:new Date().toISOString(),tag:"-",act:"サンプルデータを読み込み",note:`${items.length}台`}], minStock:{"Dell Latitude 5440":2,"Dell Latitude 7440":2,"Dell OptiPlex 7010":2,"Lenovo ThinkPad L14 Gen4":2}, stocktakeStart:null, isSample:true, lists:defaultLists()};
 }
+/* サンプルが1台でも残っている間だけ「サンプル扱い」（クラウドの本物データを上書きしないための安全策）。1台ずつ手で消した場合も解除する */
+function sampleLeft(){
+  if(!S || !S.isSample) return false;
+  const tags=new Set(sampleData().items.map(i=>i.tag));
+  if(S.items.some(i=>tags.has(i.tag))) return true;
+  delete S.isSample; save();
+  return false;
+}
 let S;
 try{ S = JSON.parse(localStorage.getItem(KEY)); }catch(e){ S = null; }
 if(!S || !Array.isArray(S.items)) S = sampleData();
@@ -274,36 +291,68 @@ function beep(ok){
     o.start(); o.stop(audioCtx.currentTime + (ok?.09:.28));
   }catch(e){}
 }
-/* ---------- プルダウン入力（選ぶ／「その他」で自由入力） ---------- */
-const PICK_OTHER="__other__";
+/* ---------- プルダウン入力（タップで候補を表示／入力で絞り込み／一覧にない文字もそのまま使える） ---------- */
 function pickItems(listKey){
   const base=S.lists[listKey]||[];
   if(listKey!=="model") return base;
   // 機種は、登録済みの機種も自動で候補に加える
   return [...new Set(base.concat(S.items.map(i=>i.model)))].sort((a,b)=>a.localeCompare(b));
 }
+const pkNorm=(s)=>String(s??"").normalize("NFKC").toLowerCase();
 function mountPick(boxId,value){
   const box=$(boxId); if(!box) return;
-  const items=pickItems(box.dataset.list), v=String(value??"");
-  const custom = v!=="" && !items.includes(v);
-  box.innerHTML=`<select class="pk-sel"><option value="">（選択してください）</option>${items.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join("")}<option value="${PICK_OTHER}">その他（自由入力）…</option></select><input type="text" class="pk-txt" placeholder="${esc(box.dataset.ph||"")}" autocomplete="off" hidden>`;
-  const sel=box.querySelector("select"), txt=box.querySelector("input");
-  if(custom){ sel.value=PICK_OTHER; txt.hidden=false; txt.value=v; } else sel.value=v;
+  box.innerHTML=`<span class="pk-wrap"><input type="text" class="pk-in" placeholder="選ぶ／入力して絞り込み" autocomplete="off" autocapitalize="off" spellcheck="false" role="combobox" aria-expanded="false"><button type="button" class="pk-arrow" tabindex="-1" aria-label="候補を開く">▾</button></span><div class="pk-list" hidden></div>`;
+  box.querySelector(".pk-in").value=String(value??"");
 }
 function pickVal(boxId){
-  const box=$(boxId); if(!box) return "";
-  const sel=box.querySelector("select"), txt=box.querySelector("input");
-  if(!sel) return "";
-  return (sel.value===PICK_OTHER ? txt.value : sel.value).trim();
+  const box=$(boxId), inp=box&&box.querySelector(".pk-in");
+  return inp?inp.value.trim():"";
 }
-document.addEventListener("change",e=>{
-  if(!e.target.classList||!e.target.classList.contains("pk-sel")) return;
-  const txt=e.target.parentElement.querySelector("input.pk-txt");
-  const other=e.target.value===PICK_OTHER;
-  txt.hidden=!other; if(other) txt.focus();
+function pkRender(box,typed){
+  const inp=box.querySelector(".pk-in"), list=box.querySelector(".pk-list");
+  const q=pkNorm(inp.value.trim()), cur=inp.value.trim();
+  const all=pickItems(box.dataset.list);
+  const shown = typed&&q ? all.filter(s=>pkNorm(s).includes(q)) : all;
+  let html="";
+  if(cur&&!typed) html+=`<div class="pk-opt pk-clear" data-v="">（未選択にする）</div>`;   // 絞り込み中は出さない
+  html+=shown.map(s=>`<div class="pk-opt${s===cur?" cur":""}" role="option" data-v="${esc(s)}">${esc(s)}</div>`).join("");
+  if(!shown.length) html+=`<div class="pk-none">${all.length?"一致する候補がありません。入力した文字が、そのまま使われます。":"候補がまだありません。入力した文字が、そのまま使われます。"}</div>`;
+  list.innerHTML=html; list.hidden=false; inp.setAttribute("aria-expanded","true");
+  box.dataset.hl="-1";
+}
+function pkClose(box){ const l=box.querySelector(".pk-list"); if(l){ l.hidden=true; } const i=box.querySelector(".pk-in"); if(i) i.setAttribute("aria-expanded","false"); }
+function pkChoose(box,v){
+  const inp=box.querySelector(".pk-in"); inp.value=v; pkClose(box);
+}
+function pkMove(box,d){
+  const opts=[...box.querySelectorAll(".pk-list .pk-opt")]; if(!opts.length) return;
+  let i=parseInt(box.dataset.hl||"-1",10); i=(i+d+opts.length)%opts.length; box.dataset.hl=String(i);
+  opts.forEach((o,k)=>o.classList.toggle("hl",k===i)); opts[i].scrollIntoView({block:"nearest"});
+}
+document.addEventListener("focusin",e=>{ const i=e.target; if(i.classList&&i.classList.contains("pk-in")) pkRender(i.closest(".pickbox"),false); });
+document.addEventListener("focusout",e=>{ const i=e.target; if(i.classList&&i.classList.contains("pk-in")){ const box=i.closest(".pickbox"); setTimeout(()=>{ if(!box.contains(document.activeElement)) pkClose(box); },0); } });
+document.addEventListener("input",e=>{ const i=e.target; if(i.classList&&i.classList.contains("pk-in")) pkRender(i.closest(".pickbox"),true); });
+document.addEventListener("pointerdown",e=>{
+  const opt=e.target.closest&&e.target.closest(".pk-opt"), arrow=e.target.closest&&e.target.closest(".pk-arrow");
+  if(opt){ e.preventDefault(); pkChoose(opt.closest(".pickbox"),opt.dataset.v); }
+  else if(arrow){
+    e.preventDefault(); const box=arrow.closest(".pickbox"), inp=box.querySelector(".pk-in");
+    if(box.querySelector(".pk-list").hidden){ inp.focus(); pkRender(box,false); } else pkClose(box);
+  }
 });
-function remountBulkPicks(){   // 一括入荷の欄：選択中の値を保ったまま、候補だけ更新
-  [["bulkModelBox"],["bulkLocBox"]].forEach(([id])=>{ if($(id)) mountPick(id,pickVal(id)); });
+document.addEventListener("keydown",e=>{
+  const i=e.target; if(!(i.classList&&i.classList.contains("pk-in"))) return;
+  const box=i.closest(".pickbox"), list=box.querySelector(".pk-list");
+  if(e.key==="ArrowDown"||e.key==="ArrowUp"){ e.preventDefault(); if(list.hidden) pkRender(box,false); pkMove(box,e.key==="ArrowDown"?1:-1); }
+  else if(e.key==="Enter"){
+    const hl=list.querySelector(".pk-opt.hl");
+    if(!list.hidden && hl){ e.preventDefault(); pkChoose(box,hl.dataset.v); }
+    else if(!list.hidden){ pkClose(box); }   // 入力した文字をそのまま使う（フォーム送信は妨げない）
+  }
+  else if(e.key==="Escape"&&!list.hidden){ e.preventDefault(); e.stopPropagation(); pkClose(box); }
+});
+function remountBulkPicks(){   // 一括入荷の欄：入力中の値を保ったまま、候補だけ更新
+  ["bulkModelBox","bulkLocBox"].forEach(id=>{ const box=$(id); if(!box) return; if(box.querySelector(".pk-in")){ /* 候補は開くたびに作り直すので、再描画は不要 */ } else mountPick(id,""); });
 }
 
 function tagHint(tag){
@@ -387,7 +436,7 @@ function setMode(m){
   $("modeHint").textContent = HINTS[m];
   $("result").innerHTML="";
   if(m==="stocktake" && !S.stocktakeStart){ startStocktake(false); }
-  (m==="bulk" && !pickVal("bulkModelBox") ? $("bulkModelBox").querySelector("select") : $("scanInput")).focus();
+  (m==="bulk" && !pickVal("bulkModelBox") ? $("bulkModelBox").querySelector(".pk-in") : $("scanInput")).focus();
 }
 $("modes").addEventListener("change",e=>{ if(e.target.name==="mode") setMode(e.target.value); });
 
@@ -418,7 +467,7 @@ function handleScan(tag){
   }
   if(mode==="bulk"){
     const model=pickVal("bulkModelBox");
-    if(!model){ beep(false); showResult("ng","<h3>機種が未選択です</h3><div>上の「入荷する機種」を選ぶか入力してから読み取ってください。</div>"); $("bulkModelBox").querySelector("select").focus(); return; }
+    if(!model){ beep(false); showResult("ng","<h3>機種が未選択です</h3><div>上の「入荷する機種」を選ぶか入力してから読み取ってください。</div>"); $("bulkModelBox").querySelector(".pk-in").focus(); return; }
     if(it){ beep(false); showResult("warn",`<h3>登録済みです</h3><div class="tagbig">${esc(tag)}</div><div>${esc(it.model)} ／ ${badge(it.status)}</div>`); return; }
     addItem({tag,model,status:"在庫",loc:pickVal("bulkLocBox"),memo:""});
     beep(true);
@@ -455,10 +504,10 @@ function showUnknown(tag,fromStocktake,hint){
         <label class="full">メモ<span class="pickbox" id="nfMemoBox" data-list="memo" data-ph="メモを入力"></span></label>
       </div>
       <div class="row"><button class="primary" type="submit">登録</button><button type="button" data-act="dismiss">閉じる</button>
-      <span class="muted">機種が一覧にないときは「その他（自由入力）」を選びます（${models.length}機種を登録済み）</span></div>
+      <span class="muted">機種が一覧にないときは、そのまま入力してください（${models.length}機種を登録済み）</span></div>
     </form>`);
   mountPick("nfModelBox",lastModel); mountPick("nfLocBox",""); mountPick("nfMemoBox","");
-  setTimeout(()=>{ const s=$("nfModelBox").querySelector("select"); if(s) s.focus(); },0);
+  setTimeout(()=>{ const s=$("nfModelBox").querySelector(".pk-in"); if(s) s.focus(); },0);
 }
 let lastModel="";
 
@@ -474,7 +523,7 @@ $("result").addEventListener("submit",e=>{
   e.preventDefault();
   const f=e.target, tag=f.dataset.tag;
   const model=pickVal("nfModelBox");
-  if(!model){ alert("機種を選ぶか、「その他（自由入力）」で入力してください。"); return; }
+  if(!model){ alert("機種を選ぶか、入力してください。"); return; }
   addItem({tag,model,status:$("nfStatus").value,loc:pickVal("nfLocBox"),memo:pickVal("nfMemoBox")});
   if(f.dataset.st==="1"){ const it=find(tag); it.checked=nowIso(); save(); }
   showResult("ok",`<h3>登録しました</h3><div class="tagbig">${esc(tag)}</div><div>${esc(model)}</div>`);
@@ -509,7 +558,7 @@ $("editCancel").onclick=()=>$("editDlg").close();
 $("editForm").addEventListener("submit",(ev)=>{
   const it=find(editingTag); if(!it) return;
   const model=pickVal("editModelBox");
-  if(!model){ ev.preventDefault(); alert("機種を選ぶか、「その他（自由入力）」で入力してください。"); return; }
+  if(!model){ ev.preventDefault(); alert("機種を選ぶか、入力してください。"); return; }
   const changes=[], loc=pickVal("editLocBox"), memo=pickVal("editMemoBox");
   if(it.model!==model) changes.push(`機種 ${it.model} → ${model}`);
   if(it.status!==$("editStatus").value) changes.push(`状態 ${it.status} → ${$("editStatus").value}`);
@@ -531,7 +580,7 @@ const isChecked = (i)=> i.checked && S.stocktakeStart && i.checked>=S.stocktakeS
 
 /* ---------- 描画 ---------- */
 function renderBackup(){
-  $("demoBanner").hidden=!S.isSample;   // サンプルを消したら案内も消す
+  sampleLeft();   // サンプルが残っていなければ、サンプル扱いの印を外す
   const el=$("backupBanner");
   if(!S.items.length){ el.hidden=true; return; }
   const days=S.lastBackup?Math.floor((Date.now()-new Date(S.lastBackup))/86400000):null;
@@ -676,7 +725,7 @@ function renderData(){
     </div>
     <div class="syncbox">
       <h3>▼ プルダウンの項目を設定</h3>
-      <div class="muted">1行に1項目で書いて「保存」を押すと、登録・編集・まとめて入荷のプルダウンに反映されます。一覧にないものは、いつでも「その他（自由入力）」で入力できます。</div>
+      <div class="muted">1行に1項目で書いて「保存」を押すと、登録・編集・まとめて入荷のプルダウンに反映されます。一覧にないものは、いつでもそのまま入力できます。入力欄をタップすると候補が出て、文字を入れると絞り込まれます。</div>
       <div class="formgrid">
         <label class="full">保管場所／使用者<textarea class="lsarea" id="lsLoc" placeholder="例：&#10;倉庫A&#10;総務部">${esc(S.lists.loc.join("\n"))}</textarea></label>
         <label class="full">メモ<textarea class="lsarea" id="lsMemo" placeholder="例：&#10;液晶不良&#10;要初期化">${esc(S.lists.memo.join("\n"))}</textarea></label>
@@ -826,7 +875,7 @@ const syErrText=(j)=>SY_ERR[j.error]||("送信できませんでした："+(j.me
 
 async function pushNow(manual,force){
   if(!syncOn()||syBusy) return;
-  if(S.isSample){ SY.lastErr="サンプルデータのままなので送信を止めています。「スプレッドシートから復元」か「すべて空にする」をしてください。"; sySave(); renderSync(); return; }
+  if(sampleLeft()){ SY.lastErr="サンプルデータが残っているので送信を止めています。「スプレッドシートから復元」か「すべて空にする」をしてください。"; sySave(); renderSync(); return; }
   if(!S.items.length && !force){ SY.lastErr="台帳が空のため送信を止めています（誤って上書きしないため）。"; sySave(); renderSync(); return; }
   if(!SY.lastOk && !manual){ SY.lastErr="最初の1回は、データ画面の「今すぐ送信」か「復元」を押してください（クラウドの既存データを誤って上書きしないため）。"; sySave(); renderSync(); return; }
   if(!navigator.onLine){ renderSync(); return; }
@@ -906,7 +955,7 @@ $("tab-data").addEventListener("click",async e=>{
       if(!p.ok){ msg(syErrText(p)); return; }
       const changed=(url!==SY.url||key!==SY.key);
       SY.url=url; SY.key=key; if(changed){ SY.lastOk=null; SY.dirty=false; } SY.lastErr=""; sySave(); renderSync();
-      msg(`接続できました（スプレッドシート「${p.sheet}」・台帳 ${p.rows} 台）。`+(p.rows>0&&(S.isSample||!S.items.length)?" 既にデータがあります。「スプレッドシートから復元」を押してください。":" 次に「今すぐ送信」を押すと、この端末のデータを送ります。"));
+      msg(`接続できました（スプレッドシート「${p.sheet}」・台帳 ${p.rows} 台）。`+(p.rows>0&&(sampleLeft()||!S.items.length)?" 既にデータがあります。「スプレッドシートから復元」を押してください。":" 次に「今すぐ送信」を押すと、この端末のデータを送ります。"));
     }catch(err){ msg(netErr(err)); }
   }
   if(id==="syPush"){
