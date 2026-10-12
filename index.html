@@ -114,6 +114,9 @@ dialog::backdrop{background:rgba(0,0,0,.4)}
 .syncbar.err{color:var(--ng)}
 .syncbox{border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:12px}
 .syncbox h3{margin:0 0 6px;font-size:15px}
+.pickbox{display:flex;flex-direction:column;gap:4px}
+.pickbox[hidden]{display:none}
+textarea.lsarea{min-height:96px;resize:vertical;font-size:15px}
 </style>
 </head>
 <body>
@@ -134,8 +137,8 @@ dialog::backdrop{background:rgba(0,0,0,.4)}
       <label><input type="radio" name="mode" value="stocktake">棚卸</label>
     </div>
     <div class="opts" id="bulkOpts" hidden>
-      <label>入荷する機種（この機種で次々に登録）<input type="text" id="bulkModel" list="modelList" placeholder="例：Dell Latitude 5440"></label>
-      <label>保管場所<input type="text" id="bulkLoc" placeholder="例：倉庫A"></label>
+      <label>入荷する機種（この機種で次々に登録）<span class="pickbox" id="bulkModelBox" data-list="model" data-ph="例：Dell Latitude 5440"></span></label>
+      <label>保管場所<span class="pickbox" id="bulkLocBox" data-list="loc" data-ph="例：倉庫A"></span></label>
     </div>
     <form class="scanrow" id="scanForm" autocomplete="off">
       <input id="scanInput" type="text" placeholder="タグを手入力" autocapitalize="characters" spellcheck="false">
@@ -174,10 +177,10 @@ dialog::backdrop{background:rgba(0,0,0,.4)}
   <form method="dialog" id="editForm">
     <div class="tagbig" id="editTag"></div>
     <div class="formgrid">
-      <label class="full">機種<input type="text" id="editModel" list="modelList" required></label>
+      <label class="full">機種<span class="pickbox" id="editModelBox" data-list="model" data-ph="機種名を入力"></span></label>
       <label>状態<select id="editStatus"></select></label>
-      <label>保管場所／使用者<input type="text" id="editLoc"></label>
-      <label class="full">メモ<input type="text" id="editMemo"></label>
+      <label>保管場所／使用者<span class="pickbox" id="editLocBox" data-list="loc" data-ph="場所・使用者を入力"></span></label>
+      <label class="full">メモ<span class="pickbox" id="editMemoBox" data-list="memo" data-ph="メモを入力"></span></label>
     </div>
     <div class="row" style="justify-content:flex-end">
       <button type="button" id="editCancel">キャンセル</button>
@@ -223,12 +226,22 @@ function sampleData(){
     mk("C02XK3LMD6","Apple MacBook Air M2","在庫","倉庫A"),
     mk("C02XK3LMD7","Apple MacBook Air M2","貸出中","デザイン部 小林","",6),
   ];
-  return {items, log:[{t:new Date().toISOString(),tag:"-",act:"サンプルデータを読み込み",note:`${items.length}台`}], minStock:{"Dell Latitude 5440":2,"Dell Latitude 7440":2,"Dell OptiPlex 7010":2,"Lenovo ThinkPad L14 Gen4":2}, stocktakeStart:null, isSample:true};
+  return {items, log:[{t:new Date().toISOString(),tag:"-",act:"サンプルデータを読み込み",note:`${items.length}台`}], minStock:{"Dell Latitude 5440":2,"Dell Latitude 7440":2,"Dell OptiPlex 7010":2,"Lenovo ThinkPad L14 Gen4":2}, stocktakeStart:null, isSample:true, lists:defaultLists()};
 }
 let S;
 try{ S = JSON.parse(localStorage.getItem(KEY)); }catch(e){ S = null; }
 if(!S || !Array.isArray(S.items)) S = sampleData();
 S.minStock = S.minStock || {};
+/* プルダウンの項目（機種・保管場所／使用者・メモ）。未設定のときだけ例を入れる。「データ」タブで編集できる */
+function defaultLists(){
+  return {model:[], loc:["倉庫A","倉庫B","総務部","メーカー修理中"], memo:["液晶不良","キーボード不良","バッテリー劣化","要初期化","廃棄予定"]};
+}
+function normLists(x){
+  if(!x || typeof x!=="object") return defaultLists();
+  const clean=(a)=>{ const seen=new Set(), out=[]; (Array.isArray(a)?a:[]).forEach(v=>{ const s=String(v??"").trim().slice(0,60); if(s&&!seen.has(s)){ seen.add(s); out.push(s); } }); return out; };
+  return {model:clean(x.model), loc:clean(x.loc), memo:clean(x.memo)};
+}
+S.lists = normLists(S.lists);
 function save(){ try{ localStorage.setItem(KEY, JSON.stringify(S)); }catch(e){} markDirty(); }
 
 /* クラウド保存の設定（URL・合言葉）は、データとは別にこの端末の中にだけ保存する。プログラムには書かない */
@@ -261,6 +274,38 @@ function beep(ok){
     o.start(); o.stop(audioCtx.currentTime + (ok?.09:.28));
   }catch(e){}
 }
+/* ---------- プルダウン入力（選ぶ／「その他」で自由入力） ---------- */
+const PICK_OTHER="__other__";
+function pickItems(listKey){
+  const base=S.lists[listKey]||[];
+  if(listKey!=="model") return base;
+  // 機種は、登録済みの機種も自動で候補に加える
+  return [...new Set(base.concat(S.items.map(i=>i.model)))].sort((a,b)=>a.localeCompare(b));
+}
+function mountPick(boxId,value){
+  const box=$(boxId); if(!box) return;
+  const items=pickItems(box.dataset.list), v=String(value??"");
+  const custom = v!=="" && !items.includes(v);
+  box.innerHTML=`<select class="pk-sel"><option value="">（選択してください）</option>${items.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join("")}<option value="${PICK_OTHER}">その他（自由入力）…</option></select><input type="text" class="pk-txt" placeholder="${esc(box.dataset.ph||"")}" autocomplete="off" hidden>`;
+  const sel=box.querySelector("select"), txt=box.querySelector("input");
+  if(custom){ sel.value=PICK_OTHER; txt.hidden=false; txt.value=v; } else sel.value=v;
+}
+function pickVal(boxId){
+  const box=$(boxId); if(!box) return "";
+  const sel=box.querySelector("select"), txt=box.querySelector("input");
+  if(!sel) return "";
+  return (sel.value===PICK_OTHER ? txt.value : sel.value).trim();
+}
+document.addEventListener("change",e=>{
+  if(!e.target.classList||!e.target.classList.contains("pk-sel")) return;
+  const txt=e.target.parentElement.querySelector("input.pk-txt");
+  const other=e.target.value===PICK_OTHER;
+  txt.hidden=!other; if(other) txt.focus();
+});
+function remountBulkPicks(){   // 一括入荷の欄：選択中の値を保ったまま、候補だけ更新
+  [["bulkModelBox"],["bulkLocBox"]].forEach(([id])=>{ if($(id)) mountPick(id,pickVal(id)); });
+}
+
 function tagHint(tag){
   // 桁数の目安だけ（Dellのサービスタグは7桁の英数字）
   if(/^\d{9,}$/.test(tag)) return `数字だけの${tag.length}桁です。Express Service Codeの可能性があります（サービスタグは7桁の英数字）。`;
@@ -342,7 +387,7 @@ function setMode(m){
   $("modeHint").textContent = HINTS[m];
   $("result").innerHTML="";
   if(m==="stocktake" && !S.stocktakeStart){ startStocktake(false); }
-  (m==="bulk" && !$("bulkModel").value ? $("bulkModel") : $("scanInput")).focus();
+  (m==="bulk" && !pickVal("bulkModelBox") ? $("bulkModelBox").querySelector("select") : $("scanInput")).focus();
 }
 $("modes").addEventListener("change",e=>{ if(e.target.name==="mode") setMode(e.target.value); });
 
@@ -372,10 +417,10 @@ function handleScan(tag){
     return;
   }
   if(mode==="bulk"){
-    const model=$("bulkModel").value.trim();
-    if(!model){ beep(false); showResult("ng","<h3>機種が未入力です</h3><div>上の「入荷する機種」を入力してから読み取ってください。</div>"); $("bulkModel").focus(); return; }
+    const model=pickVal("bulkModelBox");
+    if(!model){ beep(false); showResult("ng","<h3>機種が未選択です</h3><div>上の「入荷する機種」を選ぶか入力してから読み取ってください。</div>"); $("bulkModelBox").querySelector("select").focus(); return; }
     if(it){ beep(false); showResult("warn",`<h3>登録済みです</h3><div class="tagbig">${esc(tag)}</div><div>${esc(it.model)} ／ ${badge(it.status)}</div>`); return; }
-    addItem({tag,model,status:"在庫",loc:$("bulkLoc").value.trim(),memo:""});
+    addItem({tag,model,status:"在庫",loc:pickVal("bulkLocBox"),memo:""});
     beep(true);
     const cnt=S.items.filter(i=>i.model===model&&i.status!=="廃棄").length;
     showResult("ok",`<h3>入荷登録しました${hint?"（注意あり）":""}</h3><div class="tagbig">${esc(tag)}</div><div>${esc(model)} → 保有 ${cnt} 台</div>${hint?`<div class="muted">${esc(hint)}</div>`:""}`);
@@ -404,15 +449,16 @@ function showUnknown(tag,fromStocktake,hint){
     ${hint?`<div class="muted">${esc(hint)}</div>`:""}
     <form id="newForm" data-tag="${esc(tag)}" data-st="${fromStocktake?1:0}">
       <div class="formgrid">
-        <label class="full">機種<input type="text" id="nfModel" list="modelList" required placeholder="例：Dell Latitude 5440" value="${esc(lastModel)}"></label>
+        <label class="full">機種<span class="pickbox" id="nfModelBox" data-list="model" data-ph="例：Dell Latitude 5440"></span></label>
         <label>状態<select id="nfStatus">${STATUS.map(s=>`<option>${s}</option>`).join("")}</select></label>
-        <label>保管場所／使用者<input type="text" id="nfLoc"></label>
-        <label class="full">メモ<input type="text" id="nfMemo"></label>
+        <label>保管場所／使用者<span class="pickbox" id="nfLocBox" data-list="loc" data-ph="場所・使用者を入力"></span></label>
+        <label class="full">メモ<span class="pickbox" id="nfMemoBox" data-list="memo" data-ph="メモを入力"></span></label>
       </div>
       <div class="row"><button class="primary" type="submit">登録</button><button type="button" data-act="dismiss">閉じる</button>
-      <span class="muted">機種が違う場合は一覧から選ぶか、新しい名前を入力します（${models.length}機種を登録済み）</span></div>
+      <span class="muted">機種が一覧にないときは「その他（自由入力）」を選びます（${models.length}機種を登録済み）</span></div>
     </form>`);
-  setTimeout(()=>{ const m=$("nfModel"); if(m){ m.focus(); m.select(); } },0);
+  mountPick("nfModelBox",lastModel); mountPick("nfLocBox",""); mountPick("nfMemoBox","");
+  setTimeout(()=>{ const s=$("nfModelBox").querySelector("select"); if(s) s.focus(); },0);
 }
 let lastModel="";
 
@@ -427,9 +473,9 @@ $("result").addEventListener("submit",e=>{
   if(e.target.id!=="newForm") return;
   e.preventDefault();
   const f=e.target, tag=f.dataset.tag;
-  const model=$("nfModel").value.trim();
-  if(!model) return;
-  addItem({tag,model,status:$("nfStatus").value,loc:$("nfLoc").value.trim(),memo:$("nfMemo").value.trim()});
+  const model=pickVal("nfModelBox");
+  if(!model){ alert("機種を選ぶか、「その他（自由入力）」で入力してください。"); return; }
+  addItem({tag,model,status:$("nfStatus").value,loc:pickVal("nfLocBox"),memo:pickVal("nfMemoBox")});
   if(f.dataset.st==="1"){ const it=find(tag); it.checked=nowIso(); save(); }
   showResult("ok",`<h3>登録しました</h3><div class="tagbig">${esc(tag)}</div><div>${esc(model)}</div>`);
   $("scanInput").focus();
@@ -455,19 +501,20 @@ function openEdit(tag){
   const it=find(tag); if(!it) return;
   editingTag=tag;
   $("editTag").textContent=tag;
-  $("editModel").value=it.model; $("editStatus").value=it.status;
-  $("editLoc").value=it.loc||""; $("editMemo").value=it.memo||"";
+  mountPick("editModelBox",it.model); mountPick("editLocBox",it.loc||""); mountPick("editMemoBox",it.memo||"");
+  $("editStatus").value=it.status;
   $("editDlg").showModal();
 }
 $("editCancel").onclick=()=>$("editDlg").close();
-$("editForm").addEventListener("submit",()=>{
+$("editForm").addEventListener("submit",(ev)=>{
   const it=find(editingTag); if(!it) return;
-  const model=$("editModel").value.trim(); if(!model) return;
-  const changes=[];
+  const model=pickVal("editModelBox");
+  if(!model){ ev.preventDefault(); alert("機種を選ぶか、「その他（自由入力）」で入力してください。"); return; }
+  const changes=[], loc=pickVal("editLocBox"), memo=pickVal("editMemoBox");
   if(it.model!==model) changes.push(`機種 ${it.model} → ${model}`);
   if(it.status!==$("editStatus").value) changes.push(`状態 ${it.status} → ${$("editStatus").value}`);
-  if((it.loc||"")!==$("editLoc").value.trim()) changes.push("場所変更");
-  it.model=model; it.status=$("editStatus").value; it.loc=$("editLoc").value.trim(); it.memo=$("editMemo").value.trim();
+  if((it.loc||"")!==loc) changes.push("場所変更");
+  it.model=model; it.status=$("editStatus").value; it.loc=loc; it.memo=memo;
   it.updated=nowIso();
   if(changes.length) addLog(editingTag,"編集",changes.join(" / "));
   save(); renderAll();
@@ -507,6 +554,7 @@ function renderStats(){
 }
 function renderModelList(){
   $("modelList").innerHTML=[...new Set(S.items.map(i=>i.model))].sort().map(m=>`<option value="${esc(m)}">`).join("");
+  remountBulkPicks();
 }
 
 let openModels=new Set();
@@ -626,6 +674,17 @@ function renderData(){
       <div id="syDetail" class="muted"></div>
       <div id="syMsg" class="muted"></div>
     </div>
+    <div class="syncbox">
+      <h3>▼ プルダウンの項目を設定</h3>
+      <div class="muted">1行に1項目で書いて「保存」を押すと、登録・編集・まとめて入荷のプルダウンに反映されます。一覧にないものは、いつでも「その他（自由入力）」で入力できます。</div>
+      <div class="formgrid">
+        <label class="full">保管場所／使用者<textarea class="lsarea" id="lsLoc" placeholder="例：&#10;倉庫A&#10;総務部">${esc(S.lists.loc.join("\n"))}</textarea></label>
+        <label class="full">メモ<textarea class="lsarea" id="lsMemo" placeholder="例：&#10;液晶不良&#10;要初期化">${esc(S.lists.memo.join("\n"))}</textarea></label>
+        <label class="full">機種（登録済みの機種は自動で候補に出ます。まだ登録していない機種を、事前に入れておけます）<textarea class="lsarea" id="lsModel" placeholder="例：&#10;Dell Latitude 5440">${esc(S.lists.model.join("\n"))}</textarea></label>
+      </div>
+      <div class="toolbar" style="margin-top:8px"><button id="lsSave" class="primary">項目を保存</button></div>
+      <div id="lsMsg" class="muted"></div>
+    </div>
     <div class="toolbar">
       <button id="csvOut" class="primary">台帳をCSVで書き出し（Excelで開けます）</button>
       <button id="csvInBtn">CSVを取り込み</button>
@@ -678,11 +737,11 @@ $("tab-data").addEventListener("click",async e=>{
   if(id==="csvInBtn") $("csvIn").click();
   if(id==="resetSample"){
     if(syncOn()){ alert("クラウド保存の連携中は使えません（サンプルが本物のデータを上書きするのを防ぐため）。先に「連携を解除」してください。"); return; }
-    if(confirm("現在のデータを破棄して、サンプルデータに戻します。よろしいですか？")){ S=sampleData(); save(); renderAll(); $("result").innerHTML=""; }
+    if(confirm("現在のデータを破棄して、サンプルデータに戻します。よろしいですか？（プルダウンの項目は残ります）")){ const keep=S.lists; S=sampleData(); S.lists=keep; save(); renderAll(); $("result").innerHTML=""; }
   }
   if(id==="clearAll"){
     if(confirm("すべての機器と履歴を削除します。元に戻せません。よろしいですか？")){
-      S={items:[],log:[],minStock:{},stocktakeStart:null}; save(); renderAll(); $("result").innerHTML="";
+      S={items:[],log:[],minStock:{},stocktakeStart:null,lists:S.lists}; save(); renderAll(); $("result").innerHTML="";
       if(syncOn() && confirm("クラウド（スプレッドシート）の台帳も空にしますか？\n（「日次バックアップ」シートに、その日の最初の送信前の状態が残ります）\n「キャンセル」を選ぶと、クラウド側は変えません。")) pushNow(true,true);
     }
   }
@@ -760,7 +819,7 @@ async function api(action,extra,creds){
 function syncPayload(){
   return {
     items:S.items.map(i=>({tag:i.tag,model:i.model,status:i.status,loc:i.loc||"",memo:i.memo||"",updated:i.updated||"",checked:i.checked||""})),
-    log:S.log.slice(0,200), minStock:S.minStock||{}, stocktakeStart:S.stocktakeStart||""
+    log:S.log.slice(0,200), minStock:S.minStock||{}, stocktakeStart:S.stocktakeStart||"", lists:S.lists
   };
 }
 const syErrText=(j)=>SY_ERR[j.error]||("送信できませんでした："+(j.message||j.error));
@@ -808,7 +867,8 @@ async function restoreNow(){
   if(!confirm(`この端末のデータ（${S.items.length}台）を、スプレッドシートの内容（${items.length}台）で置き換えます。よろしいですか？`)){ renderSync(); return "復元をキャンセルしました。"; }
   const log=(Array.isArray(j.log)?j.log:[]).slice(0,200).map(l=>({t:String(l.t||""),tag:String(l.tag||""),act:String(l.act||""),note:String(l.note||"")}));
   let minStock={}; if(j.minStock&&typeof j.minStock==="object") Object.keys(j.minStock).forEach(k=>{ const n=parseInt(j.minStock[k],10); if(n>0) minStock[k]=n; });
-  S={items,log,minStock,stocktakeStart:j.stocktakeStart||null,lastBackup:S.lastBackup};
+  // 古いApps Scriptは lists を返さない → その場合はこの端末の項目を残す
+  S={items,log,minStock,stocktakeStart:j.stocktakeStart||null,lastBackup:S.lastBackup,lists:(j.lists&&typeof j.lists==="object")?normLists(j.lists):S.lists};
   save(); clearTimeout(syTimer);
   SY.dirty=false; SY.lastOk=nowIso(); SY.lastErr=""; sySave();
   renderAll(); $("result").innerHTML="";
@@ -860,6 +920,16 @@ $("tab-data").addEventListener("click",async e=>{
       SY={url:"",key:"",dirty:false,lastOk:null,lastErr:""}; sySave(); clearTimeout(syTimer); renderAll(); renderSync();
     }
   }
+});
+
+$("tab-data").addEventListener("click",e=>{
+  if(e.target.id!=="lsSave") return;
+  const lines=(id)=>$(id).value.split(/\r?\n/);
+  S.lists=normLists({loc:lines("lsLoc"),memo:lines("lsMemo"),model:lines("lsModel")});
+  save(); remountBulkPicks();
+  const L=S.lists;
+  $("lsMsg").textContent=`保存しました（保管場所 ${L.loc.length}・メモ ${L.memo.length}・機種 ${L.model.length} 項目）。`;
+  ["lsLoc","lsMemo","lsModel"].forEach((id,i)=>{ $(id).value=[L.loc,L.memo,L.model][i].join("\n"); });
 });
 
 /* ---------- 起動 ---------- */
