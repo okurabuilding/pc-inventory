@@ -399,6 +399,20 @@ document.addEventListener("keydown",e=>{
   }
   else if(e.key==="Escape"&&!list.hidden){ e.preventDefault(); e.stopPropagation(); pkClose(box); }
 });
+/* プルダウンの項目にない保管場所・メモを使ったとき、項目に追加するかを聞く。
+   断った内容は、アプリを開いている間は、もう聞かない。機種は、登録すると自動で候補に出るので、聞かない */
+const addDeclined=new Set();
+function offerAddToList(listKey,value){
+  value=String(value||"").trim().slice(0,60); if(!value) return;
+  if((S.lists[listKey]||[]).includes(value)) return;
+  const k=listKey+"|"+value; if(addDeclined.has(k)) return;
+  const label=listKey==="loc"?"保管場所／使用者":"メモ";
+  if(confirm(`「${value}」は、${label}のプルダウンの項目にありません。
+項目に追加しますか？
+（追加すると、次回から候補に出ます）`)){
+    S.lists[listKey]=S.lists[listKey]||[]; S.lists[listKey].push(value); save(); remountBulkPicks(); renderData();
+  }else addDeclined.add(k);
+}
 function remountBulkPicks(){   // 一括入荷の欄：入力中の値を保ったまま、候補だけ更新
   ["bulkModelBox","bulkLocBox","bulkMemoBox"].forEach(id=>{ const box=$(id); if(!box) return; if(box.querySelector(".pk-in")){ /* 候補は開くたびに作り直すので、再描画は不要 */ } else mountPick(id,""); });
 }
@@ -534,6 +548,7 @@ function applyBulkMemo(v){
   const it=find(bulkLast.tag); if(!it) return null;
   it.memo=bulkLast.base?`${bulkLast.base}／${v}`:v; it.updated=nowIso();
   addLog(it.tag,"メモ追加",v); save(); renderAll();
+  offerAddToList("memo",v);
   return it;
 }
 function flushBulkMemo(){   // 入力途中のメモがあれば、次の操作の前に保存する
@@ -564,6 +579,7 @@ function handleScan(tag){
     if(it){ beep(false); showResult("warn",`<h3>登録済みです</h3><div class="tagbig">${esc(tag)}</div><div>${esc(it.model)} ／ ${badge(it.status)}</div>`); return; }
     const status=$("bulkStatus").value||"在庫";
     addItem({tag,model,status,loc:pickVal("bulkLocBox"),memo:pickVal("bulkMemoBox")});
+    offerAddToList("loc",pickVal("bulkLocBox")); offerAddToList("memo",pickVal("bulkMemoBox"));
     beep(true);
     const cnt=S.items.filter(i=>i.model===model&&i.status!=="廃棄").length;
     const common=pickVal("bulkMemoBox");
@@ -627,7 +643,9 @@ $("result").addEventListener("submit",e=>{
   const f=e.target, tag=f.dataset.tag;
   const model=pickVal("nfModelBox");
   if(!model){ alert("機種を選ぶか、入力してください。"); return; }
-  addItem({tag,model,status:$("nfStatus").value,loc:pickVal("nfLocBox"),memo:pickVal("nfMemoBox")});
+  const nfLoc=pickVal("nfLocBox"), nfMemo=pickVal("nfMemoBox");
+  addItem({tag,model,status:$("nfStatus").value,loc:nfLoc,memo:nfMemo});
+  offerAddToList("loc",nfLoc); offerAddToList("memo",nfMemo);
   if(f.dataset.st==="1"){ const it=find(tag); it.checked=nowIso(); save(); }
   showResult("ok",`<h3>登録しました</h3><div class="tagbig">${esc(tag)}</div><div>${esc(model)}</div>`);
   $("scanInput").focus();
@@ -677,7 +695,7 @@ $("editForm").addEventListener("submit",(ev)=>{
   const it=find(editingTag); if(!it) return;
   const model=pickVal("editModelBox");
   if(!model){ ev.preventDefault(); alert("機種を選ぶか、入力してください。"); return; }
-  const changes=[], loc=pickVal("editLocBox"), memo=pickVal("editMemoBox");
+  const changes=[], loc=pickVal("editLocBox"), memo=pickVal("editMemoBox"), oldLoc=it.loc||"", oldMemo=it.memo||"";
   if(it.model!==model) changes.push(`機種 ${it.model} → ${model}`);
   if(it.status!==$("editStatus").value) changes.push(`状態 ${it.status} → ${$("editStatus").value}`);
   if((it.loc||"")!==loc) changes.push("場所変更");
@@ -685,6 +703,8 @@ $("editForm").addEventListener("submit",(ev)=>{
   it.updated=nowIso();
   if(changes.length) addLog(editingTag,"編集",changes.join(" / "));
   save(); renderAll();
+  if(loc!==oldLoc) offerAddToList("loc",loc);
+  if(memo!==oldMemo) offerAddToList("memo",memo);
 });
 
 /* ---------- 棚卸 ---------- */
@@ -1334,7 +1354,7 @@ $("ocrFile").addEventListener("change",e=>{ const f=e.target.files[0]; e.target.
    iPhoneのホーム画面アプリは、公開した新しい版を取り込まず、古いページを使い続けることがある（保存期間は10分）。
    起動時とアプリに戻ったときに version.json を確認し、版が違えば、URLに「?v=版番号」を付けて開き直す。
    データ（端末内の保存）は、URLが変わっても消えない。BUILD は公開時に書き換える（開発中は "dev" で、確認しない） */
-const BUILD="20261014-184332";
+const BUILD="20261014-184546";
 let updCheckedAt=0;
 async function checkUpdate(force){
   try{
