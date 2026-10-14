@@ -1087,7 +1087,7 @@ $("tab-data").addEventListener("click",e=>{
 });
 
 /* ---------- 文字で読み取る（OCR：Tesseract.js 5.1.1。同じ場所に置いたファイルだけを使い、外部には接続しない） ---------- */
-const OCR={js:"vendor/tesseract/tesseract.min.js",worker:"vendor/tesseract/worker.min.js",core:"vendor/tesseract",lang:"vendor/tesseract/lang",maxSide:2000};
+const OCR={js:"vendor/tesseract/tesseract.min.js",worker:"vendor/tesseract/worker.min.js",core:"vendor/tesseract",lang:"vendor/tesseract/lang",maxSide:2000,budgetMs:40000};
 let ocrWorker=null, ocrBusy=false, ocrPct="";
 const absUrl=(p)=>new URL(p,location.href).href;
 const OCR_STAT={"loading tesseract core":"読み取りの部品を準備中","initializing tesseract":"準備中","loading language traineddata":"読み取りデータを読み込み中（初回のみ・約3MB）","initializing api":"準備中","recognizing text":"文字を読み取り中"};
@@ -1098,7 +1098,8 @@ async function ocrGetWorker(){
   if(ocrWorker) return ocrWorker;
   if(!window.Tesseract) await ocrLoadScript(absUrl(OCR.js));
   const w=await Tesseract.createWorker("eng",1,{workerPath:absUrl(OCR.worker),corePath:absUrl(OCR.core),langPath:absUrl(OCR.lang),gzip:true,logger:ocrLog});
-  await w.setParameters({tessedit_char_whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",tessedit_pageseg_mode:Tesseract.PSM.SPARSE_TEXT});
+  await w.setParameters({tessedit_char_whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ",   // 空白を許可しないと「755 GBCFBBX」が「755GBCFBBX」につながる
+    tessedit_pageseg_mode:Tesseract.PSM.SPARSE_TEXT});
   ocrWorker=w; return w;
 }
 /* 写真を読み込む（スマホの向き情報も反映）。枠で切り出す元になるので、できるだけ元の大きさを保つ */
@@ -1130,45 +1131,77 @@ function ocrPrep(base,deg){
   for(let i=0;i<d.length;i+=4){ const v=Math.max(0,Math.min(255,(d[i]-lo)*255/span)); d[i]=d[i+1]=d[i+2]=v; }
   g.putImageData(id,0,0); return c;
 }
-/* 読み取った語のうち「7桁で、英字と数字の両方を含む」ものだけを候補にする
-   （数字だけの語はエクスプレスコードの断片、英字だけの語は説明文の単語が多いため） */
+/* 読み取った文字から、7桁の英数字の語を取り出す（空白・記号で区切る） */
 function ocrTokens(data){
-  const found=new Map();
-  (data.words||[]).forEach(wd=>{
-    String(wd.text||"").toUpperCase().split(/[^A-Z0-9]+/).forEach(t=>{
-      if(t.length===7 && /\d/.test(t) && /[A-Z]/.test(t)){ const c=Math.round(wd.confidence||0); if(!found.has(t)||found.get(t)<c) found.set(t,c); }
-    });
-  });
-  return found;
+  const rep=(t)=>{ const m={}; for(const ch of t) m[ch]=(m[ch]||0)+1; return Math.max(...Object.values(m)); };
+  return String(data.text||"").toUpperCase().split(/[^A-Z0-9]+/).filter(t=>t.length===7 && !["SERVICE","EXPRESS"].includes(t) && rep(t)<=3);   // 同じ文字が4回以上ある語（EEEなど）は、読み間違いの可能性が高いので除く
 }
-const OCR_ANGLES_A=[0,-6,6,-12,12];          // まず、ほぼ正立（手持ちの傾きを想定して少しずつ回す）
-const OCR_ANGLES_B=[180,174,186,90,270];     // 見つからなければ、上下逆さ・横向きも試す
+const ocrHam=(a,b)=>{ let d=0; for(let i=0;i<7;i++) if(a[i]!==b[i]) d++; return d; };
+/* 複数回の読み取り結果を、近いもの同士でまとめ、1文字ずつ多数決する（1文字違いの読み間違いを打ち消す）。傾きなしの結果は、重みを少し大きくする */
+function ocrConsensus(items){
+  const clusters=[];
+  items.slice().sort((a,b)=>b.w-a.w).forEach(it=>{
+    let c=clusters.find(c=>ocrHam(c.seed,it.t)<=3);
+    if(!c){ c={seed:it.t,members:[]}; clusters.push(c); }
+    c.members.push(it);
+  });
+  return clusters.map(c=>{
+    let s="";
+    for(let i=0;i<7;i++){ const m={}; c.members.forEach(x=>{ m[x.t[i]]=(m[x.t[i]]||0)+x.w; }); s+=Object.entries(m).sort((a,b)=>b[1]-a[1]||(c.seed[i]===b[0]?1:0)-(c.seed[i]===a[0]?1:0))[0][0]; }
+    return {tag:s,w:c.members.reduce((a,x)=>a+x.w,0),n:c.members.length};
+  }).sort((a,b)=>(b.n>=2)-(a.n>=2)||b.w-a.w||ocrVowels(a.tag)-ocrVowels(b.tag));
+}
+const ocrVowels=(t)=>(t.match(/[AEIOU]/g)||[]).length;   // 同点のときの目安（Dellのタグの規則として確認できたものではない）
+/* 読み取りの手順：まず傾き0°と±3°の3回。足りなければ二値化・大きめの傾き、上下逆さ・横向きの順に増やす。2回以上同じ結果が出たら終了 */
+const OCR_PHASES=[
+  [{deg:0},{deg:-3},{deg:3}],
+  [{deg:0,bin:1},{deg:-3,bin:1},{deg:3,bin:1},{deg:-6},{deg:6},{deg:-9},{deg:9}],
+  [{deg:180},{deg:177},{deg:183},{deg:90},{deg:87},{deg:93},{deg:270},{deg:267},{deg:273}]
+];
+function ocrBinarize(c){   // 大津の方法で白黒にする
+  const g=c.getContext("2d",{willReadFrequently:true}), id=g.getImageData(0,0,c.width,c.height), d=id.data, hist=new Array(256).fill(0);
+  for(let i=0;i<d.length;i+=4) hist[d[i]]++;
+  const n=c.width*c.height; let sum=0; for(let i=0;i<256;i++) sum+=i*hist[i];
+  let wB=0,sB=0,best=0,th=128;
+  for(let t=0;t<256;t++){ wB+=hist[t]; if(!wB) continue; const wF=n-wB; if(!wF) break; sB+=t*hist[t]; const mB=sB/wB, mF=(sum-sB)/wF, v=wB*wF*(mB-mF)*(mB-mF); if(v>best){ best=v; th=t; } }
+  for(let i=0;i<d.length;i+=4){ const v=d[i]>th?255:0; d[i]=d[i+1]=d[i+2]=v; }
+  g.putImageData(id,0,0); return c;
+}
 async function ocrRunCanvas(src){
   if(ocrBusy) return; ocrBusy=true; stopCam(); ocrPct="";
   try{
     ocrProgress("準備しています…");
     const w=await ocrGetWorker(), base=ocrFit(src);
-    const votes=new Map(); let lastText="", step=0;
-    for(const phase of [OCR_ANGLES_A,OCR_ANGLES_B]){
-      for(const deg of phase){
-        step++; ocrProgress(`文字を読み取っています…（${step}回目・傾き ${deg}°）`);
-        const {data}=await w.recognize(ocrPrep(base,deg));
-        ocrTokens(data).forEach((cf,t)=>{ const v=votes.get(t)||{n:0,cf:0}; v.n++; v.cf=Math.max(v.cf,cf); votes.set(t,v); });
+    const items=[]; let lastText="", step=0, clusters=[], timedOut=false; const tStart=Date.now();
+    const refresh=()=>{
+      let cl=ocrConsensus(items);
+      const nonDigit=cl.filter(c=>/[A-Z]/.test(c.tag));
+      clusters=nonDigit.length?nonDigit:cl;    // 数字だけの語（エクスプレスコードの断片）は、他に候補がないときだけ
+    };
+    outer: for(const phase of OCR_PHASES){
+      for(const p of phase){
+        if(Date.now()-tStart>OCR.budgetMs){ timedOut=true; break; }   // 時間がかかりすぎるときは、そこまでの結果で打ち切る
+        step++; ocrProgress(`文字を読み取っています…（${step}回目・傾き ${p.deg}°）`);
+        let c=ocrPrep(base,p.deg); if(p.bin) c=ocrBinarize(c);
+        const {data}=await w.recognize(c);
+        ocrTokens(data).forEach(t=>items.push({t,w:p.deg===0&&!p.bin?1.5:1}));
         if((data.text||"").trim()) lastText=(data.text||"").replace(/\s+/g," ").trim();
       }
-      if(votes.size) break;   // 見つかったら、そこで終わり（時間を節約）
+      refresh();
+      if(timedOut) break outer;
+      if(clusters.length && clusters[0].n>=2) break outer;   // 2回以上同じ結果が出れば、そこで終了（時間を節約）
     }
-    if(votes.size){
+    if(clusters.length){
       beep(true);
-      const list=[...votes.entries()].sort((a,b)=>b[1].n-a[1].n||b[1].cf-a[1].cf).slice(0,6);
+      const top=clusters.slice(0,6);
       showResult("ok",`<h3>🔤 サービスタグの候補</h3>
         <div class="muted">タップすると、その候補で照会・登録に進みます。<b>実物のラベルと見比べてください</b>（0とO、1とI、5とSなどは読み間違いやすい文字です）。</div>
-        ${list.map(([t,v])=>`<div class="row"><button class="primary" data-act="pickTag" data-tag="${esc(t)}">${esc(t)}</button><span class="muted">${v.n}回の読み取りで一致</span><button class="sm" data-act="ocrEdit" data-tag="${esc(t)}">入力欄で直す</button></div>`).join("")}
+        ${top.map(c=>`<div class="row"><button class="primary" data-act="pickTag" data-tag="${esc(c.tag)}">${esc(c.tag)}</button><span class="muted">${c.n>=2?`${c.n}回の読み取りが一致`:"1回だけ読み取れた（精度低め）"}</span><button class="sm" data-act="ocrEdit" data-tag="${esc(c.tag)}">入力欄で直す</button></div>`).join("")}
         <details style="margin-top:8px"><summary class="muted">最後に読み取れた全文字を見る</summary><div class="muted" style="word-break:break-all">${esc(lastText.slice(0,300))}</div></details>`);
       return;
     }
     beep(false);
-    showResult("warn",`<h3>🔤 サービスタグを見つけられませんでした</h3><div>ラベルの文字に近づいて、明るい場所で、ラベルをまっすぐ写して、もう一度撮ってみてください。数字だけ・英字だけのタグは、候補に出さない設定です（その場合は手入力してください）。</div>${lastText?`<div class="muted" style="word-break:break-all">最後に読み取れた文字：${esc(lastText.slice(0,120))}</div>`:""}`);
+    showResult("warn",`<h3>🔤 サービスタグを見つけられませんでした</h3><div>文字の行だけを、もっと狭く囲んで、もう一度読み取ってみてください。ラベルに近づいて、明るい場所で、まっすぐ撮るのも有効です。ドット文字のような特殊な字体は、読み取れないことがあります（その場合はバーコードか手入力で）。${timedOut?"<br>時間がかかったため、途中で打ち切りました。":""}</div>${lastText?`<div class="muted" style="word-break:break-all">最後に読み取れた文字：${esc(lastText.slice(0,120))}</div>`:""}`);
   }catch(e){
     beep(false);
     showResult("ng",`<h3>🔤 文字の読み取りができませんでした</h3><div>${esc(ocrErr(e))}</div>`);
