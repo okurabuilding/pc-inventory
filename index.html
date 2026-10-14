@@ -149,6 +149,7 @@ textarea.lsarea{min-height:96px;resize:vertical;font-size:15px}
     <div class="opts" id="bulkOpts" hidden>
       <label>入荷する機種（この機種で次々に登録）<span class="pickbox" id="bulkModelBox" data-list="model" data-ph="例：Dell Latitude 5440"></span></label>
       <label>保管場所<span class="pickbox" id="bulkLocBox" data-list="loc" data-ph="例：倉庫A"></span></label>
+      <label>メモ（全台に付けます）<span class="pickbox" id="bulkMemoBox" data-list="memo" data-ph="例：新品"></span></label>
     </div>
     <form class="scanrow" id="scanForm" autocomplete="off">
       <input id="scanInput" type="text" placeholder="タグを手入力" autocapitalize="characters" spellcheck="false">
@@ -387,7 +388,7 @@ document.addEventListener("keydown",e=>{
   else if(e.key==="Escape"&&!list.hidden){ e.preventDefault(); e.stopPropagation(); pkClose(box); }
 });
 function remountBulkPicks(){   // 一括入荷の欄：入力中の値を保ったまま、候補だけ更新
-  ["bulkModelBox","bulkLocBox"].forEach(id=>{ const box=$(id); if(!box) return; if(box.querySelector(".pk-in")){ /* 候補は開くたびに作り直すので、再描画は不要 */ } else mountPick(id,""); });
+  ["bulkModelBox","bulkLocBox","bulkMemoBox"].forEach(id=>{ const box=$(id); if(!box) return; if(box.querySelector(".pk-in")){ /* 候補は開くたびに作り直すので、再描画は不要 */ } else mountPick(id,""); });
 }
 
 function tagHint(tag){
@@ -533,7 +534,7 @@ function handleScan(tag){
     const model=pickVal("bulkModelBox");
     if(!model){ beep(false); showResult("ng","<h3>機種が未選択です</h3><div>上の「入荷する機種」を選ぶか入力してから読み取ってください。</div>"); $("bulkModelBox").querySelector(".pk-in").focus(); return; }
     if(it){ beep(false); showResult("warn",`<h3>登録済みです</h3><div class="tagbig">${esc(tag)}</div><div>${esc(it.model)} ／ ${badge(it.status)}</div>`); return; }
-    addItem({tag,model,status:"在庫",loc:pickVal("bulkLocBox"),memo:""});
+    addItem({tag,model,status:"在庫",loc:pickVal("bulkLocBox"),memo:pickVal("bulkMemoBox")});
     beep(true);
     const cnt=S.items.filter(i=>i.model===model&&i.status!=="廃棄").length;
     showResult("ok",`<h3>入荷登録しました${hint?"（注意あり）":""}</h3><div class="tagbig">${esc(tag)}</div><div>${esc(model)} → 保有 ${cnt} 台</div>${hint?`<div class="muted">${esc(hint)}</div>`:""}`);
