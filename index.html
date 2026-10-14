@@ -467,6 +467,7 @@ const HINTS = {
   stocktake:"棚卸中は読み取ったタグを「確認済み」にします。台帳にないタグは警告します。「棚卸」タブで未確認の一覧が見られます。"
 };
 function setMode(m){
+  flushBulkMemo();
   mode=m;
   $("bulkOpts").hidden = m!=="bulk";
   $("modeHint").textContent = HINTS[m];
@@ -514,7 +515,22 @@ $("scanInput").addEventListener("input",e=>{
   const r=smartTag(v); if(r.tag) e.target.value=r.tag;
 });
 
+/* まとめて入荷：直前に登録した1台に、個別のメモを付ける（共通メモの後ろに「／」でつなぐ） */
+let bulkLast=null;
+function applyBulkMemo(v){
+  if(!bulkLast) return null;
+  const it=find(bulkLast.tag); if(!it) return null;
+  it.memo=bulkLast.base?`${bulkLast.base}／${v}`:v; it.updated=nowIso();
+  addLog(it.tag,"メモ追加",v); save(); renderAll();
+  return it;
+}
+function flushBulkMemo(){   // 入力途中のメモがあれば、次の操作の前に保存する
+  if(!bulkLast) return;
+  if($("bmBox")){ const v=pickVal("bmBox"); if(v) applyBulkMemo(v); }
+  bulkLast=null;
+}
 function handleScan(tag){
+  flushBulkMemo();
   const it=find(tag);
   const hint=tagHint(tag);
   if(mode==="stocktake"){
@@ -537,7 +553,12 @@ function handleScan(tag){
     addItem({tag,model,status:"在庫",loc:pickVal("bulkLocBox"),memo:pickVal("bulkMemoBox")});
     beep(true);
     const cnt=S.items.filter(i=>i.model===model&&i.status!=="廃棄").length;
-    showResult("ok",`<h3>入荷登録しました${hint?"（注意あり）":""}</h3><div class="tagbig">${esc(tag)}</div><div>${esc(model)} → 保有 ${cnt} 台</div>${hint?`<div class="muted">${esc(hint)}</div>`:""}`);
+    const common=pickVal("bulkMemoBox");
+    showResult("ok",`<h3>入荷登録しました${hint?"（注意あり）":""}</h3><div class="tagbig">${esc(tag)}</div><div>${esc(model)} → 保有 ${cnt} 台${common?` ／ 共通メモ：${esc(common)}`:""}</div>${hint?`<div class="muted">${esc(hint)}</div>`:""}
+      <div class="muted" style="margin-top:8px">この1台だけのメモ（任意）。次を読み取ると、入力中の内容は<b>自動で保存</b>されます。${common?"共通メモの後ろに「／」でつながります。":""}</div>
+      <span class="pickbox" id="bmBox" data-list="memo" data-ph="この1台のメモ"></span>
+      <div class="row"><button data-act="bmSave">この1台にメモを付ける</button></div>`);
+    mountPick("bmBox",""); bulkLast={tag,base:common};
     return;
   }
   // lookup
@@ -597,7 +618,13 @@ $("result").addEventListener("submit",e=>{
 $("result").addEventListener("click",e=>{
   const b=e.target.closest("button[data-act]"); if(!b) return;
   const act=b.dataset.act;
-  if(act==="dismiss"){ $("result").innerHTML=""; $("scanInput").focus(); }
+  if(act==="dismiss"){ flushBulkMemo(); $("result").innerHTML=""; $("scanInput").focus(); }
+  if(act==="bmSave"){
+    const v=pickVal("bmBox"); if(!v){ alert("メモを入力するか、候補から選んでください。"); return; }
+    const it=applyBulkMemo(v);
+    if(it) showResult("ok",`<h3>メモを付けました</h3><div class="tagbig">${esc(it.tag)}</div><div>${esc(it.model)} ／ メモ：${esc(it.memo)}</div>`);
+    bulkLast=null; $("scanInput").focus();
+  }
   if(act==="pickTag"){ $("result").innerHTML=""; handleScan(b.dataset.tag); }
   if(act==="ocrGo") ocrSelGo(false);
   if(act==="ocrAll") ocrSelGo(true);
