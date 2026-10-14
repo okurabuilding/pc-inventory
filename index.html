@@ -1126,7 +1126,11 @@ function ocrFit(src){
   c.getContext("2d").drawImage(src,0,0,c.width,c.height); return c;
 }
 /* 指定の角度だけ回転し、白黒にしてコントラストを伸ばす */
-function ocrPrep(base,deg){
+function ocrPrep(base,deg,scale){
+  if(scale&&scale!==1){   // 倍率を変えた読み取り（結果の多数決に使う）
+    const s=document.createElement("canvas"); s.width=Math.round(base.width*scale); s.height=Math.round(base.height*scale);
+    const sg=s.getContext("2d"); sg.imageSmoothingEnabled=true; sg.imageSmoothingQuality="high"; sg.drawImage(base,0,0,s.width,s.height); base=s;
+  }
   const r=deg*Math.PI/180, cs=Math.abs(Math.cos(r)), sn=Math.abs(Math.sin(r));
   const W=Math.round(base.width*cs+base.height*sn), H=Math.round(base.width*sn+base.height*cs);
   const c=document.createElement("canvas"); c.width=W; c.height=H;
@@ -1190,9 +1194,9 @@ async function ocrRunCanvas(src){
       for(const p of phase){
         if(Date.now()-tStart>OCR.budgetMs){ timedOut=true; break; }   // 時間がかかりすぎるときは、そこまでの結果で打ち切る
         step++; ocrProgress(`文字を読み取っています…（${step}回目・傾き ${p.deg}°）`);
-        let c=ocrPrep(base,p.deg); if(p.bin) c=ocrBinarize(c);
+        let c=ocrPrep(base,p.deg,p.s); if(p.bin) c=ocrBinarize(c);
         const {data}=await w.recognize(c);
-        ocrTokens(data).forEach(t=>items.push({t,w:p.deg===0&&!p.bin?1.5:1}));
+        ocrTokens(data).forEach(t=>items.push({t,w:p.deg===0&&!p.bin&&!p.s?1.5:1}));
         if((data.text||"").trim()) lastText=(data.text||"").replace(/\s+/g," ").trim();
       }
       refresh();
@@ -1209,7 +1213,7 @@ async function ocrRunCanvas(src){
       return;
     }
     beep(false);
-    showResult("warn",`<h3>🔤 サービスタグを見つけられませんでした</h3><div>文字の行だけを、もっと狭く囲んで、もう一度読み取ってみてください。ラベルに近づいて、明るい場所で、まっすぐ撮るのも有効です。ドット文字のような特殊な字体は、読み取れないことがあります（その場合はバーコードか手入力で）。${timedOut?"<br>時間がかかったため、途中で打ち切りました。":""}</div>${lastText?`<div class="muted" style="word-break:break-all">最後に読み取れた文字：${esc(lastText.slice(0,120))}</div>`:""}`);
+    showResult("warn",`<h3>🔤 サービスタグを見つけられませんでした</h3><div>文字の行だけを、周りに少し余裕を持たせて囲み直して、もう一度読み取ってみてください。ラベルに近づいて、明るい場所で、まっすぐ撮るのも有効です。ドット文字のような特殊な字体は、読み取れないことがあります（その場合はバーコードか手入力で）。${timedOut?"<br>時間がかかったため、途中で打ち切りました。":""}</div>${lastText?`<div class="muted" style="word-break:break-all">最後に読み取れた文字：${esc(lastText.slice(0,120))}</div>`:""}`);
   }catch(e){
     beep(false);
     showResult("ng",`<h3>🔤 文字の読み取りができませんでした</h3><div>${esc(ocrErr(e))}</div>`);
@@ -1230,7 +1234,7 @@ async function ocrOpenPhoto(file){
     ocrProgress("写真を読み込んでいます…");
     const full=await ocrBase(file); ocrSel={full,view:{x:0,y:0,w:full.width,h:full.height},rect:null,dw:0,dh:0};
     showResult("",`<h3>🔤 読み取る範囲を囲んでください</h3>
-      <div class="muted">文字が横向きに読めない写真は、先に「↺ ↻」で回転してください。<br><b>① ざっくり</b>ラベルの辺りを指でなぞって囲み、「選んだ範囲を拡大」を押します。<b>② 拡大は何回でもできます。</b>サービスタグの文字が大きく見えるまで拡大したら、<b>文字の行だけ</b>を囲んで「この範囲を読み取る」を押します。狭く囲むほど正確です。</div>
+      <div class="muted">文字が横向きに読めない写真は、先に「↺ ↻」で回転してください。<br><b>① ざっくり</b>ラベルの辺りを指でなぞって囲み、「選んだ範囲を拡大」を押します。<b>② 拡大は何回でもできます。</b>サービスタグの文字が大きく見えるまで拡大したら、<b>文字の行だけ</b>を囲んで「この範囲を読み取る」を押します。文字の<b>周りに、少し余裕</b>（文字の高さの半分ほど）を持たせて囲むと、正確になります（ぴったり囲むと、端が欠けて外れやすくなります）。</div>
       <canvas id="ocrSelCv" style="display:block;margin-top:8px;border-radius:8px;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;max-width:100%"></canvas>
       <div class="row"><button class="primary" data-act="ocrGo">この範囲を読み取る</button><button data-act="ocrZoom">選んだ範囲を拡大</button><button data-act="ocrReset">全体に戻す</button></div>
       <div class="row"><button data-act="ocrRotL">↺ 左に回転</button><button data-act="ocrRotR">↻ 右に回転</button><button data-act="ocrAll">写真全体を読み取る</button><button data-act="dismiss">やめる</button></div>
@@ -1267,13 +1271,28 @@ function ocrSelBox(padRate){
   return {sx,sy,sw:Math.min(f.width-sx,Math.round(r.w*k)+2*pad),sh:Math.min(f.height-sy,Math.round(r.h*k)+2*pad)};
 }
 const ocrSelNeed=()=>{ const r=ocrSel&&ocrSel.rect; if(!r||r.w<12||r.h<8){ const m=$("ocrSelMsg"); if(m) m.textContent="先に、写真の上を指でなぞって、四角で囲んでください。"; return false; } return true; };
+/* 囲んだ範囲の周りに、背景と同じ色の無地の余白を足す。
+   文字をぴったり囲むと余白がほぼ無くなり、文字の端が欠けて精度が大きく落ちる（拡大画面で起きやすい）ため。
+   余白の色は、画像の外周の色の中央値。大きさは、文字の高さ（短い辺）の約0.8倍（30〜120px） */
+function ocrPadCrop(src){
+  const w=src.width, h=src.height, pad=Math.min(120,Math.max(30,Math.round(0.8*Math.min(w,h))));
+  const g=src.getContext("2d",{willReadFrequently:true}), R=[],G=[],B=[];
+  const take=(x,y)=>{ const d=g.getImageData(x,y,1,1).data; R.push(d[0]); G.push(d[1]); B.push(d[2]); };
+  const stepX=Math.max(1,Math.floor(w/80)), stepY=Math.max(1,Math.floor(h/80));
+  for(let x=0;x<w;x+=stepX){ take(x,0); take(x,h-1); }
+  for(let y=0;y<h;y+=stepY){ take(0,y); take(w-1,y); }
+  const med=(a)=>{ a.sort((p,q)=>p-q); return a[a.length>>1]; };
+  const c=document.createElement("canvas"); c.width=w+2*pad; c.height=h+2*pad;
+  const cg=c.getContext("2d"); cg.fillStyle=`rgb(${med(R)},${med(G)},${med(B)})`; cg.fillRect(0,0,c.width,c.height);
+  cg.drawImage(src,pad,pad); return c;
+}
 function ocrSelGo(all){
   if(!ocrSel) return;
   if(all){ ocrRunCanvas(ocrSel.full); return; }
   if(!ocrSelNeed()) return;
   const b=ocrSelBox(0.04), c=document.createElement("canvas"); c.width=b.sw; c.height=b.sh;
   c.getContext("2d").drawImage(ocrSel.full,b.sx,b.sy,b.sw,b.sh,0,0,b.sw,b.sh);
-  ocrRunCanvas(c);
+  ocrRunCanvas(ocrPadCrop(c));
 }
 function ocrSelZoom(){
   if(!ocrSel||!ocrSelNeed()) return;
@@ -1294,10 +1313,39 @@ function ocrSelReset(){ if(!ocrSel) return; ocrSel.view={x:0,y:0,w:ocrSel.full.w
 $("ocrBtn").addEventListener("click",()=>{ if(!ocrBusy) $("ocrFile").click(); });
 $("ocrFile").addEventListener("change",e=>{ const f=e.target.files[0]; e.target.value=""; if(f) ocrOpenPhoto(f); });
 
+/* ---------- 新しい版の自動取り込み ----------
+   iPhoneのホーム画面アプリは、公開した新しい版を取り込まず、古いページを使い続けることがある（保存期間は10分）。
+   起動時とアプリに戻ったときに version.json を確認し、版が違えば、URLに「?v=版番号」を付けて開き直す。
+   データ（端末内の保存）は、URLが変わっても消えない。BUILD は公開時に書き換える（開発中は "dev" で、確認しない） */
+const BUILD="20261014-182550";
+let updCheckedAt=0;
+async function checkUpdate(force){
+  try{
+    if(BUILD==="dev"||!navigator.onLine) return;
+    if(!force && Date.now()-updCheckedAt<60000) return;   // 1分に1回まで
+    updCheckedAt=Date.now();
+    const res=await fetch("version.json?t="+Date.now(),{cache:"no-store"}); if(!res.ok) return;
+    const j=await res.json(); if(!j||!j.build||j.build===BUILD) return;
+    if(camOn||ocrBusy) return;   // 読み取り中は、開き直さない
+    const key="pc_inventory_upd_"+j.build; let tried=false;
+    try{ tried=sessionStorage.getItem(key)==="1"; }catch(e){}
+    if(!tried){ try{ sessionStorage.setItem(key,"1"); }catch(e){} location.replace(location.pathname+"?v="+encodeURIComponent(j.build)); return; }
+    // 開き直しても古いままの場合は、手動で更新するための帯を出す
+    if(!$("updBar")){
+      const b=document.createElement("div"); b.id="updBar"; b.className="banner backup"; b.style.cursor="pointer";
+      b.textContent="新しい版があります。ここをタップして更新してください。";
+      b.addEventListener("click",()=>{ location.replace(location.pathname+"?v="+encodeURIComponent(j.build)+"&r="+Date.now()); });
+      document.querySelector(".wrap").prepend(b);
+    }
+  }catch(e){}
+}
+document.addEventListener("visibilitychange",()=>{ if(!document.hidden) checkUpdate(false); });
+
 /* ---------- 起動 ---------- */
 renderAll();
 setMode("lookup");
 if(SY.dirty) pushNow();   // 前回送れなかった分があれば、開いたときに再送
+checkUpdate(true);
 </script>
 </body>
 </html>
