@@ -148,6 +148,7 @@ textarea.lsarea{min-height:96px;resize:vertical;font-size:15px}
     </div>
     <div class="opts" id="bulkOpts" hidden>
       <label>入荷する機種（この機種で次々に登録）<span class="pickbox" id="bulkModelBox" data-list="model" data-ph="例：Dell Latitude 5440"></span></label>
+      <label>状態（全台に付けます）<select id="bulkStatus"></select></label>
       <label>保管場所<span class="pickbox" id="bulkLocBox" data-list="loc" data-ph="例：倉庫A"></span></label>
       <label>メモ（全台に付けます）<span class="pickbox" id="bulkMemoBox" data-list="memo" data-ph="例：新品"></span></label>
     </div>
@@ -550,11 +551,12 @@ function handleScan(tag){
     const model=pickVal("bulkModelBox");
     if(!model){ beep(false); showResult("ng","<h3>機種が未選択です</h3><div>上の「入荷する機種」を選ぶか入力してから読み取ってください。</div>"); $("bulkModelBox").querySelector(".pk-in").focus(); return; }
     if(it){ beep(false); showResult("warn",`<h3>登録済みです</h3><div class="tagbig">${esc(tag)}</div><div>${esc(it.model)} ／ ${badge(it.status)}</div>`); return; }
-    addItem({tag,model,status:"在庫",loc:pickVal("bulkLocBox"),memo:pickVal("bulkMemoBox")});
+    const status=$("bulkStatus").value||"在庫";
+    addItem({tag,model,status,loc:pickVal("bulkLocBox"),memo:pickVal("bulkMemoBox")});
     beep(true);
     const cnt=S.items.filter(i=>i.model===model&&i.status!=="廃棄").length;
     const common=pickVal("bulkMemoBox");
-    showResult("ok",`<h3>入荷登録しました${hint?"（注意あり）":""}</h3><div class="tagbig">${esc(tag)}</div><div>${esc(model)} → 保有 ${cnt} 台${common?` ／ 共通メモ：${esc(common)}`:""}</div>${hint?`<div class="muted">${esc(hint)}</div>`:""}
+    showResult("ok",`<h3>入荷登録しました${hint?"（注意あり）":""}</h3><div class="tagbig">${esc(tag)}</div><div>${esc(model)} ／ ${badge(status)} → 保有 ${cnt} 台${common?` ／ 共通メモ：${esc(common)}`:""}</div>${hint?`<div class="muted">${esc(hint)}</div>`:""}
       <div class="muted" style="margin-top:8px">この1台だけのメモ（任意）。次を読み取ると、入力中の内容は<b>自動で保存</b>されます。${common?"共通メモの後ろに「／」でつながります。":""}</div>
       <span class="pickbox" id="bmBox" data-list="memo" data-ph="この1台のメモ"></span>
       <div class="row"><button data-act="bmSave">この1台にメモを付ける</button></div>`);
@@ -644,6 +646,7 @@ function changeStatus(tag,st){
 /* ---------- 編集ダイアログ ---------- */
 let editingTag=null;
 $("editStatus").innerHTML=STATUS.map(s=>`<option>${s}</option>`).join("");
+$("bulkStatus").innerHTML=STATUS.map(s=>`<option>${s}</option>`).join("");   // 初期値は先頭の「在庫」
 function openEdit(tag){
   const it=find(tag); if(!it) return;
   editingTag=tag;
