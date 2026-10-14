@@ -159,6 +159,7 @@ textarea.lsarea{min-height:96px;resize:vertical;font-size:15px}
       <div class="guide"></div>
       <div class="camstat" id="camStat">バーコードを枠の中に入れてください</div>
     </div>
+    <div class="hint">📝 バーコードが読めないとき：入力欄をタップしてキーボード上の「テキストをスキャン」（または入力欄を長押し）で、ラベルに印字された文字（例：HD30MD2）を読み取れます（お使いのiPhoneに機能があれば）。エクスプレスサービスコードなどが一緒に入っても、7桁のサービスタグだけを取り出します。</div>
     <div class="hint" id="modeHint"></div>
     <div id="result"></div>
   </div>
@@ -474,12 +475,41 @@ function setMode(m){
 $("modes").addEventListener("change",e=>{ if(e.target.name==="mode") setMode(e.target.value); });
 
 /* ---------- 読み取り処理 ---------- */
+/* 文字列の中から、7桁のサービスタグだけを取り出す。
+   iPhoneの「テキストをスキャン」や貼り付けで、「HD30MD2 エクスプレスサービスコード 37796427830」のように
+   余分な文字が混ざって入ってきても対応する。1語だけ（手入力・バーコード）なら、そのまま使う */
+function smartTag(raw){
+  const s=String(raw||"").normalize("NFKC").toUpperCase();
+  const joined=normTag(s), toks=s.split(/[^A-Z0-9]+/).filter(Boolean);
+  if(!String(raw||"").trim()) return {tag:""};                     // 空：何もしない
+  if(!toks.length) return {err:`英数字が見つかりませんでした。（読み取った文字：${String(raw).replace(/\s+/g," ").trim().slice(0,60)}）`};
+  if(toks.length===1){
+    if(/^\d{9,}$/.test(joined)) return {err:`数字だけの${joined.length}桁（${joined}）はエクスプレスサービスコードです。7桁のサービスタグを入れてください。`};
+    return {tag:joined};
+  }
+  const cand=[...new Set(toks.filter(t=>t.length===7 && !/^\d{9,}$/.test(t) && /\d/.test(t)))];   // 数字を含む7桁（SERVICE等の英単語を除く）
+  if(cand.length===1) return {tag:cand[0]};
+  if(cand.length>1) return {choices:cand};
+  if(joined.length<=12) return {tag:joined};                       // 「AB-12345」のように区切って入力した場合
+  const letters=toks.filter(t=>t.length===7 && !/\d/.test(t) && !["SERVICE","EXPRESS"].includes(t));
+  if(letters.length===1) return {tag:letters[0]};
+  return {err:`文字の中から、7桁のサービスタグを見つけられませんでした。（読み取った文字：${String(raw).replace(/\s+/g," ").trim().slice(0,60)}）`};
+}
 $("scanForm").addEventListener("submit",e=>{
   e.preventDefault();
-  const tag=normTag($("scanInput").value);
+  const raw=$("scanInput").value;
   $("scanInput").value="";
-  if(tag) handleScan(tag);
+  const r=smartTag(raw);
+  if(r.err) showResult("warn",`<h3>サービスタグを取り出せませんでした</h3><div>${esc(r.err)}</div>`);
+  else if(r.choices) showResult("warn",`<h3>サービスタグの候補が複数あります。どれですか？</h3><div class="row">${r.choices.map(t=>`<button class="primary" data-act="pickTag" data-tag="${esc(t)}">${esc(t)}</button>`).join("")}</div>`);
+  else if(r.tag) handleScan(r.tag);
   $("scanInput").focus();
+});
+/* 長い文字列や区切りのある文字が入ってきたら、入力欄の中でサービスタグだけに整える（確定前に目で確認できる） */
+$("scanInput").addEventListener("input",e=>{
+  const v=e.target.value;
+  if(!(/[\s　]/.test(v) || v.length>12)) return;
+  const r=smartTag(v); if(r.tag) e.target.value=r.tag;
 });
 
 function handleScan(tag){
@@ -566,6 +596,7 @@ $("result").addEventListener("click",e=>{
   const b=e.target.closest("button[data-act]"); if(!b) return;
   const act=b.dataset.act;
   if(act==="dismiss"){ $("result").innerHTML=""; $("scanInput").focus(); }
+  if(act==="pickTag"){ $("result").innerHTML=""; handleScan(b.dataset.tag); }
   if(act==="status"){ changeStatus(b.dataset.tag,b.dataset.st); const it=find(b.dataset.tag); if(it) showItem(it); }
   if(act==="edit"){ openEdit(b.dataset.tag); }
 });
