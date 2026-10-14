@@ -870,6 +870,7 @@ function renderData(){
         <button id="syRestore">スプレッドシートから復元</button>
         <button id="syOff" class="danger">連携を解除</button>
       </div>
+      <div class="muted" style="margin-top:6px">📊 <a href="view.html" style="color:var(--accent)">閲覧用ページを開く</a>（PC・スマホで、スプレッドシートの内容を見られます。読み取り専用）</div>
       <div id="syDetail" class="muted"></div>
       <div id="syMsg" class="muted"></div>
     </div>
@@ -1354,7 +1355,7 @@ $("ocrFile").addEventListener("change",e=>{ const f=e.target.files[0]; e.target.
    iPhoneのホーム画面アプリは、公開した新しい版を取り込まず、古いページを使い続けることがある（保存期間は10分）。
    起動時とアプリに戻ったときに version.json を確認し、版が違えば、URLに「?v=版番号」を付けて開き直す。
    データ（端末内の保存）は、URLが変わっても消えない。BUILD は公開時に書き換える（開発中は "dev" で、確認しない） */
-const BUILD="20261014-184546";
+const BUILD="20261014-191850";
 let updCheckedAt=0;
 async function checkUpdate(force){
   try{
