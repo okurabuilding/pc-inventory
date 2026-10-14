@@ -28,6 +28,7 @@
   }
 }
 *{box-sizing:border-box}
+[hidden]{display:none!important}   /* hidden属性を、他のdisplay指定より優先する（.opts等が隠れなかった） */
 body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 "Yu Gothic UI","Meiryo",system-ui,sans-serif}
 .wrap{max-width:1080px;margin:0 auto;padding:16px}
 h1{font-size:20px;margin:0 0 2px}
