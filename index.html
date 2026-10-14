@@ -153,13 +153,13 @@ textarea.lsarea{min-height:96px;resize:vertical;font-size:15px}
       <input id="scanInput" type="text" placeholder="タグを手入力" autocapitalize="characters" spellcheck="false">
       <button class="primary" type="submit">確定</button>
     </form>
-    <div class="row"><button type="button" class="primary" id="camBtn">📷 カメラで読み取る</button><span class="muted" id="camMsg"></span></div>
+    <div class="row"><button type="button" class="primary" id="camBtn">📷 カメラで読み取る</button><button type="button" id="ocrBtn">🔤 文字で読み取る（写真）</button><input type="file" id="ocrFile" accept="image/*" capture="environment" hidden><span class="muted" id="camMsg"></span></div>
     <div class="camwrap" id="camWrap" hidden>
       <video id="camVideo" playsinline muted autoplay></video>
       <div class="guide"></div>
       <div class="camstat" id="camStat">バーコードを枠の中に入れてください</div>
     </div>
-    <div class="hint">📝 バーコードが読めないとき：入力欄をタップしてキーボード上の「テキストをスキャン」（または入力欄を長押し）で、ラベルに印字された文字（例：HD30MD2）を読み取れます（お使いのiPhoneに機能があれば）。エクスプレスサービスコードなどが一緒に入っても、7桁のサービスタグだけを取り出します。</div>
+    <div class="hint">📝 バーコードが読めないとき：「🔤 文字で読み取る」でラベルを撮影すると、印字された文字からサービスタグの候補を探します（初回だけ、読み取り用データ約7MBを読み込みます）。読み間違い（0とO、1とIなど）があるので、登録前に実物と見比べてください。</div>
     <div class="hint" id="modeHint"></div>
     <div id="result"></div>
   </div>
@@ -597,6 +597,11 @@ $("result").addEventListener("click",e=>{
   const act=b.dataset.act;
   if(act==="dismiss"){ $("result").innerHTML=""; $("scanInput").focus(); }
   if(act==="pickTag"){ $("result").innerHTML=""; handleScan(b.dataset.tag); }
+  if(act==="ocrGo") ocrSelGo(false);
+  if(act==="ocrAll") ocrSelGo(true);
+  if(act==="ocrZoom") ocrSelZoom();
+  if(act==="ocrReset") ocrSelReset();
+  if(act==="ocrEdit"){ $("result").innerHTML=""; $("scanInput").value=b.dataset.tag; $("scanInput").focus(); }
   if(act==="status"){ changeStatus(b.dataset.tag,b.dataset.st); const it=find(b.dataset.tag); if(it) showItem(it); }
   if(act==="edit"){ openEdit(b.dataset.tag); }
 });
@@ -1044,6 +1049,163 @@ $("tab-data").addEventListener("click",e=>{
   $("lsMsg").textContent=`保存しました（保管場所 ${L.loc.length}・メモ ${L.memo.length}・機種 ${L.model.length} 項目）。`;
   ["lsLoc","lsMemo","lsModel"].forEach((id,i)=>{ $(id).value=[L.loc,L.memo,L.model][i].join("\n"); });
 });
+
+/* ---------- 文字で読み取る（OCR：Tesseract.js 5.1.1。同じ場所に置いたファイルだけを使い、外部には接続しない） ---------- */
+const OCR={js:"vendor/tesseract/tesseract.min.js",worker:"vendor/tesseract/worker.min.js",core:"vendor/tesseract",lang:"vendor/tesseract/lang",maxSide:2000};
+let ocrWorker=null, ocrBusy=false, ocrPct="";
+const absUrl=(p)=>new URL(p,location.href).href;
+const OCR_STAT={"loading tesseract core":"読み取りの部品を準備中","initializing tesseract":"準備中","loading language traineddata":"読み取りデータを読み込み中（初回のみ・約3MB）","initializing api":"準備中","recognizing text":"文字を読み取り中"};
+function ocrLog(m){ if(!m||!m.status) return; ocrPct=(OCR_STAT[m.status]||m.status)+(typeof m.progress==="number"?` ${Math.round(m.progress*100)}%`:""); const el=document.getElementById("ocrProg"); if(el) el.textContent=ocrPct; }
+const ocrProgress=(t)=>showResult("",`<h3>🔤 ${esc(t)}</h3><div class="muted" id="ocrProg">${esc(ocrPct)}</div>`);
+function ocrLoadScript(src){ return new Promise((res,rej)=>{ const s=document.createElement("script"); s.src=src; s.onload=res; s.onerror=()=>rej(new Error("script")); document.head.appendChild(s); }); }
+async function ocrGetWorker(){
+  if(ocrWorker) return ocrWorker;
+  if(!window.Tesseract) await ocrLoadScript(absUrl(OCR.js));
+  const w=await Tesseract.createWorker("eng",1,{workerPath:absUrl(OCR.worker),corePath:absUrl(OCR.core),langPath:absUrl(OCR.lang),gzip:true,logger:ocrLog});
+  await w.setParameters({tessedit_char_whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",tessedit_pageseg_mode:Tesseract.PSM.SPARSE_TEXT});
+  ocrWorker=w; return w;
+}
+/* 写真を読み込む（スマホの向き情報も反映）。枠で切り出す元になるので、できるだけ元の大きさを保つ */
+async function ocrBase(file,maxSide){
+  maxSide=maxSide||4096;
+  let bmp; try{ bmp=await createImageBitmap(file,{imageOrientation:"from-image"}); }catch(e){ bmp=await createImageBitmap(file); }
+  const sc=Math.min(1,maxSide/Math.max(bmp.width,bmp.height)), w=Math.round(bmp.width*sc), h=Math.round(bmp.height*sc);
+  const c=document.createElement("canvas"); c.width=w; c.height=h; c.getContext("2d").drawImage(bmp,0,0,w,h);
+  if(bmp.close) bmp.close();
+  return c;
+}
+/* 読み取りに使う大きさ（長辺2000px以下）に縮める */
+function ocrFit(src){
+  const sc=Math.min(1,OCR.maxSide/Math.max(src.width,src.height)); if(sc>=1) return src;
+  const c=document.createElement("canvas"); c.width=Math.round(src.width*sc); c.height=Math.round(src.height*sc);
+  c.getContext("2d").drawImage(src,0,0,c.width,c.height); return c;
+}
+/* 指定の角度だけ回転し、白黒にしてコントラストを伸ばす */
+function ocrPrep(base,deg){
+  const r=deg*Math.PI/180, cs=Math.abs(Math.cos(r)), sn=Math.abs(Math.sin(r));
+  const W=Math.round(base.width*cs+base.height*sn), H=Math.round(base.width*sn+base.height*cs);
+  const c=document.createElement("canvas"); c.width=W; c.height=H;
+  const g=c.getContext("2d",{willReadFrequently:true}); g.fillStyle="#808080"; g.fillRect(0,0,W,H);
+  g.translate(W/2,H/2); g.rotate(r); g.drawImage(base,-base.width/2,-base.height/2);
+  const id=g.getImageData(0,0,W,H), d=id.data, hist=new Uint32Array(256);
+  for(let i=0;i<d.length;i+=4){ const y=(d[i]*299+d[i+1]*587+d[i+2]*114)/1000|0; d[i]=d[i+1]=d[i+2]=y; hist[y]++; }
+  const n=W*H; let lo=0,hi=255,acc=0; while(lo<255&&(acc+=hist[lo])<n*0.02) lo++; acc=0; while(hi>0&&(acc+=hist[hi])<n*0.02) hi--;
+  const span=Math.max(1,hi-lo);
+  for(let i=0;i<d.length;i+=4){ const v=Math.max(0,Math.min(255,(d[i]-lo)*255/span)); d[i]=d[i+1]=d[i+2]=v; }
+  g.putImageData(id,0,0); return c;
+}
+/* 読み取った語のうち「7桁で、英字と数字の両方を含む」ものだけを候補にする
+   （数字だけの語はエクスプレスコードの断片、英字だけの語は説明文の単語が多いため） */
+function ocrTokens(data){
+  const found=new Map();
+  (data.words||[]).forEach(wd=>{
+    String(wd.text||"").toUpperCase().split(/[^A-Z0-9]+/).forEach(t=>{
+      if(t.length===7 && /\d/.test(t) && /[A-Z]/.test(t)){ const c=Math.round(wd.confidence||0); if(!found.has(t)||found.get(t)<c) found.set(t,c); }
+    });
+  });
+  return found;
+}
+const OCR_ANGLES_A=[0,-6,6,-12,12];          // まず、ほぼ正立（手持ちの傾きを想定して少しずつ回す）
+const OCR_ANGLES_B=[180,174,186,90,270];     // 見つからなければ、上下逆さ・横向きも試す
+async function ocrRunCanvas(src){
+  if(ocrBusy) return; ocrBusy=true; stopCam(); ocrPct="";
+  try{
+    ocrProgress("準備しています…");
+    const w=await ocrGetWorker(), base=ocrFit(src);
+    const votes=new Map(); let lastText="", step=0;
+    for(const phase of [OCR_ANGLES_A,OCR_ANGLES_B]){
+      for(const deg of phase){
+        step++; ocrProgress(`文字を読み取っています…（${step}回目・傾き ${deg}°）`);
+        const {data}=await w.recognize(ocrPrep(base,deg));
+        ocrTokens(data).forEach((cf,t)=>{ const v=votes.get(t)||{n:0,cf:0}; v.n++; v.cf=Math.max(v.cf,cf); votes.set(t,v); });
+        if((data.text||"").trim()) lastText=(data.text||"").replace(/\s+/g," ").trim();
+      }
+      if(votes.size) break;   // 見つかったら、そこで終わり（時間を節約）
+    }
+    if(votes.size){
+      beep(true);
+      const list=[...votes.entries()].sort((a,b)=>b[1].n-a[1].n||b[1].cf-a[1].cf).slice(0,6);
+      showResult("ok",`<h3>🔤 サービスタグの候補</h3>
+        <div class="muted">タップすると、その候補で照会・登録に進みます。<b>実物のラベルと見比べてください</b>（0とO、1とI、5とSなどは読み間違いやすい文字です）。</div>
+        ${list.map(([t,v])=>`<div class="row"><button class="primary" data-act="pickTag" data-tag="${esc(t)}">${esc(t)}</button><span class="muted">${v.n}回の読み取りで一致</span><button class="sm" data-act="ocrEdit" data-tag="${esc(t)}">入力欄で直す</button></div>`).join("")}
+        <details style="margin-top:8px"><summary class="muted">最後に読み取れた全文字を見る</summary><div class="muted" style="word-break:break-all">${esc(lastText.slice(0,300))}</div></details>`);
+      return;
+    }
+    beep(false);
+    showResult("warn",`<h3>🔤 サービスタグを見つけられませんでした</h3><div>ラベルの文字に近づいて、明るい場所で、ラベルをまっすぐ写して、もう一度撮ってみてください。数字だけ・英字だけのタグは、候補に出さない設定です（その場合は手入力してください）。</div>${lastText?`<div class="muted" style="word-break:break-all">最後に読み取れた文字：${esc(lastText.slice(0,120))}</div>`:""}`);
+  }catch(e){
+    beep(false);
+    showResult("ng",`<h3>🔤 文字の読み取りができませんでした</h3><div>${esc(ocrErr(e))}</div>`);
+  }finally{ ocrBusy=false; }
+}
+function ocrErr(e){
+  const m=String((e&&e.message)||e||"");
+  if(location.protocol==="file:"||location.protocol==="data:") return "この開き方（ファイルを直接開いた状態）では、読み取り用の部品を読み込めません。公開ページのURLから開いてください。";
+  if(m==="script") return "読み取り用の部品を読み込めませんでした。電波を確認して、ページを開き直してください。";
+  return "エラー："+m.slice(0,120)+"（古いiPhoneでは動かないことがあります）";
+}
+async function ocrRun(file){ await ocrRunCanvas(await ocrBase(file)); }   // 範囲を選ばず、写真全体を読み取る
+/* 写真を撮ったら、読み取る範囲（サービスタグの文字の行）を指で囲んでもらう。狭く囲むほど精度が上がる */
+let ocrSel=null;
+async function ocrOpenPhoto(file){
+  if(ocrBusy) return;
+  try{
+    ocrProgress("写真を読み込んでいます…");
+    const full=await ocrBase(file); ocrSel={full,view:{x:0,y:0,w:full.width,h:full.height},rect:null,dw:0,dh:0};
+    showResult("",`<h3>🔤 読み取る範囲を囲んでください</h3>
+      <div class="muted"><b>① ざっくり</b>ラベルの辺りを指でなぞって囲み、「選んだ範囲を拡大」を押します。<b>② 拡大は何回でもできます。</b>サービスタグの文字が大きく見えるまで拡大したら、<b>文字の行だけ</b>を囲んで「この範囲を読み取る」を押します。狭く囲むほど正確です。</div>
+      <canvas id="ocrSelCv" style="display:block;margin-top:8px;border-radius:8px;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;max-width:100%"></canvas>
+      <div class="row"><button class="primary" data-act="ocrGo">この範囲を読み取る</button><button data-act="ocrZoom">選んだ範囲を拡大</button><button data-act="ocrReset">全体に戻す</button></div>
+      <div class="row"><button data-act="ocrAll">写真全体を読み取る</button><button data-act="dismiss">やめる</button></div>
+      <div class="muted" id="ocrSelMsg"></div>`);
+    const cv=$("ocrSelCv"); let start=null;
+    ocrSelLayout();
+    const pt=(e)=>{ const r=cv.getBoundingClientRect(); return {x:Math.max(0,Math.min(ocrSel.dw,(e.clientX-r.left)*ocrSel.dw/r.width)),y:Math.max(0,Math.min(ocrSel.dh,(e.clientY-r.top)*ocrSel.dh/r.height))}; };
+    cv.addEventListener("pointerdown",e=>{ e.preventDefault(); try{ cv.setPointerCapture(e.pointerId); }catch(_){} start=pt(e); ocrSel.rect={x:start.x,y:start.y,w:0,h:0}; ocrSelDraw(); });
+    cv.addEventListener("pointermove",e=>{ if(!start) return; const q=pt(e); ocrSel.rect={x:Math.min(start.x,q.x),y:Math.min(start.y,q.y),w:Math.abs(q.x-start.x),h:Math.abs(q.y-start.y)}; ocrSelDraw(); });
+    const end=()=>{ start=null; }; cv.addEventListener("pointerup",end); cv.addEventListener("pointercancel",end);
+  }catch(e){ showResult("ng",`<h3>🔤 写真を読み込めませんでした</h3><div>${esc(ocrErr(e))}</div>`); }
+}
+/* 表示中の範囲（view）を、画面に収まる大きさで描く */
+function ocrSelLayout(){
+  const cv=$("ocrSelCv"), v=ocrSel.view, boxW=Math.max(200,($("result").clientWidth||340)-28), boxH=Math.round(window.innerHeight*0.7);
+  const sc=Math.min(boxW/v.w,boxH/v.h); ocrSel.dw=Math.max(1,Math.round(v.w*sc)); ocrSel.dh=Math.max(1,Math.round(v.h*sc));
+  cv.width=ocrSel.dw; cv.height=ocrSel.dh; cv.style.width=ocrSel.dw+"px"; cv.style.height=ocrSel.dh+"px";
+  ocrSel.rect=null; ocrSelDraw();
+}
+function ocrSelDraw(){
+  const cv=$("ocrSelCv"); if(!cv||!ocrSel) return;
+  const g=cv.getContext("2d"), r=ocrSel.rect, v=ocrSel.view;
+  g.clearRect(0,0,cv.width,cv.height); g.drawImage(ocrSel.full,v.x,v.y,v.w,v.h,0,0,cv.width,cv.height);
+  if(r&&r.w>2&&r.h>2){
+    g.fillStyle="rgba(0,0,0,.45)"; g.fillRect(0,0,cv.width,r.y); g.fillRect(0,r.y+r.h,cv.width,cv.height-r.y-r.h); g.fillRect(0,r.y,r.x,r.h); g.fillRect(r.x+r.w,r.y,cv.width-r.x-r.w,r.h);
+    g.strokeStyle="#ffd400"; g.lineWidth=2; g.strokeRect(r.x,r.y,r.w,r.h);
+  }
+}
+/* 画面上の枠（表示座標）を、元の写真の座標に直す（余白つき） */
+function ocrSelBox(padRate){
+  const f=ocrSel.full, r=ocrSel.rect, v=ocrSel.view, k=v.w/ocrSel.dw;
+  const pad=Math.round(Math.max(r.w,r.h)*k*padRate);
+  const sx=Math.max(0,Math.round(v.x+r.x*k)-pad), sy=Math.max(0,Math.round(v.y+r.y*k)-pad);
+  return {sx,sy,sw:Math.min(f.width-sx,Math.round(r.w*k)+2*pad),sh:Math.min(f.height-sy,Math.round(r.h*k)+2*pad)};
+}
+const ocrSelNeed=()=>{ const r=ocrSel&&ocrSel.rect; if(!r||r.w<12||r.h<8){ const m=$("ocrSelMsg"); if(m) m.textContent="先に、写真の上を指でなぞって、四角で囲んでください。"; return false; } return true; };
+function ocrSelGo(all){
+  if(!ocrSel) return;
+  if(all){ ocrRunCanvas(ocrSel.full); return; }
+  if(!ocrSelNeed()) return;
+  const b=ocrSelBox(0.04), c=document.createElement("canvas"); c.width=b.sw; c.height=b.sh;
+  c.getContext("2d").drawImage(ocrSel.full,b.sx,b.sy,b.sw,b.sh,0,0,b.sw,b.sh);
+  ocrRunCanvas(c);
+}
+function ocrSelZoom(){
+  if(!ocrSel||!ocrSelNeed()) return;
+  const b=ocrSelBox(0.1); ocrSel.view={x:b.sx,y:b.sy,w:Math.max(60,b.sw),h:Math.max(40,b.sh)};
+  ocrSelLayout();
+}
+function ocrSelReset(){ if(!ocrSel) return; ocrSel.view={x:0,y:0,w:ocrSel.full.width,h:ocrSel.full.height}; ocrSelLayout(); }
+$("ocrBtn").addEventListener("click",()=>{ if(!ocrBusy) $("ocrFile").click(); });
+$("ocrFile").addEventListener("change",e=>{ const f=e.target.files[0]; e.target.value=""; if(f) ocrOpenPhoto(f); });
 
 /* ---------- 起動 ---------- */
 renderAll();
