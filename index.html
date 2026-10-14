@@ -343,7 +343,10 @@ function pkClose(box){
   const i=box.querySelector(".pk-in"); if(i) i.setAttribute("aria-expanded","false");
   box.dataset.touch=""; pkOpen.delete(box);
 }
-function pkChoose(box,v){ box.querySelector(".pk-in").value=v; pkClose(box); }
+function pkChoose(box,v){
+  const inp=box.querySelector(".pk-in"); inp.value=v; pkClose(box);
+  if(document.activeElement===inp) inp.blur();   // 入力欄の選択を外す（キーボードも閉じる）
+}
 function pkMove(box,d){
   const opts=[...box.querySelectorAll(".pk-list .pk-opt")]; if(!opts.length) return;
   let i=parseInt(box.dataset.hl||"-1",10); i=(i+d+opts.length)%opts.length; box.dataset.hl=String(i);
@@ -375,6 +378,7 @@ document.addEventListener("pointerup",()=>{ pkOpen.forEach(b=>{ b.dataset.touch=
 document.addEventListener("pointercancel",()=>{ pkOpen.forEach(b=>{ b.dataset.touch=""; }); });
 document.addEventListener("click",e=>{
   const opt=e.target.closest&&e.target.closest(".pk-opt"); if(!opt) return;
+  e.preventDefault(); e.stopPropagation();                                  // <label>の中なので、止めないと入力欄が再び選択されて一覧が開き直す
   pkChoose(opt.closest(".pickbox"),opt.dataset.v);                          // タップ（スクロールではない）で選択
 });
 document.addEventListener("keydown",e=>{
