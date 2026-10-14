@@ -641,6 +641,8 @@ $("result").addEventListener("click",e=>{
   if(act==="ocrAll") ocrSelGo(true);
   if(act==="ocrZoom") ocrSelZoom();
   if(act==="ocrReset") ocrSelReset();
+  if(act==="ocrRotL") ocrSelRotate(false);
+  if(act==="ocrRotR") ocrSelRotate(true);
   if(act==="ocrEdit"){ $("result").innerHTML=""; $("scanInput").value=b.dataset.tag; $("scanInput").focus(); }
   if(act==="status"){ changeStatus(b.dataset.tag,b.dataset.st); const it=find(b.dataset.tag); if(it) showItem(it); }
   if(act==="edit"){ openEdit(b.dataset.tag); }
@@ -1227,10 +1229,10 @@ async function ocrOpenPhoto(file){
     ocrProgress("写真を読み込んでいます…");
     const full=await ocrBase(file); ocrSel={full,view:{x:0,y:0,w:full.width,h:full.height},rect:null,dw:0,dh:0};
     showResult("",`<h3>🔤 読み取る範囲を囲んでください</h3>
-      <div class="muted"><b>① ざっくり</b>ラベルの辺りを指でなぞって囲み、「選んだ範囲を拡大」を押します。<b>② 拡大は何回でもできます。</b>サービスタグの文字が大きく見えるまで拡大したら、<b>文字の行だけ</b>を囲んで「この範囲を読み取る」を押します。狭く囲むほど正確です。</div>
+      <div class="muted">文字が横向きに読めない写真は、先に「↺ ↻」で回転してください。<br><b>① ざっくり</b>ラベルの辺りを指でなぞって囲み、「選んだ範囲を拡大」を押します。<b>② 拡大は何回でもできます。</b>サービスタグの文字が大きく見えるまで拡大したら、<b>文字の行だけ</b>を囲んで「この範囲を読み取る」を押します。狭く囲むほど正確です。</div>
       <canvas id="ocrSelCv" style="display:block;margin-top:8px;border-radius:8px;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;max-width:100%"></canvas>
       <div class="row"><button class="primary" data-act="ocrGo">この範囲を読み取る</button><button data-act="ocrZoom">選んだ範囲を拡大</button><button data-act="ocrReset">全体に戻す</button></div>
-      <div class="row"><button data-act="ocrAll">写真全体を読み取る</button><button data-act="dismiss">やめる</button></div>
+      <div class="row"><button data-act="ocrRotL">↺ 左に回転</button><button data-act="ocrRotR">↻ 右に回転</button><button data-act="ocrAll">写真全体を読み取る</button><button data-act="dismiss">やめる</button></div>
       <div class="muted" id="ocrSelMsg"></div>`);
     const cv=$("ocrSelCv"); let start=null;
     ocrSelLayout();
@@ -1275,6 +1277,16 @@ function ocrSelGo(all){
 function ocrSelZoom(){
   if(!ocrSel||!ocrSelNeed()) return;
   const b=ocrSelBox(0.1); ocrSel.view={x:b.sx,y:b.sy,w:Math.max(60,b.sw),h:Math.max(40,b.sh)};
+  ocrSelLayout();
+}
+/* 写真を90°回転する（拡大中の範囲も、回転に合わせて保つ） */
+function ocrSelRotate(cw){
+  if(!ocrSel) return;
+  const o=ocrSel.full, W=o.width, H=o.height, v=ocrSel.view;
+  const c=document.createElement("canvas"); c.width=H; c.height=W;
+  const g=c.getContext("2d"); g.translate(H/2,W/2); g.rotate((cw?1:-1)*Math.PI/2); g.drawImage(o,-W/2,-H/2);
+  ocrSel.full=c;
+  ocrSel.view = cw ? {x:H-(v.y+v.h),y:v.x,w:v.h,h:v.w} : {x:v.y,y:W-(v.x+v.w),w:v.h,h:v.w};
   ocrSelLayout();
 }
 function ocrSelReset(){ if(!ocrSel) return; ocrSel.view={x:0,y:0,w:ocrSel.full.width,h:ocrSel.full.height}; ocrSelLayout(); }
