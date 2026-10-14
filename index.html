@@ -592,16 +592,20 @@ function showUnknown(tag,fromStocktake,hint){
         <label class="full">メモ<span class="pickbox" id="nfMemoBox" data-list="memo" data-ph="メモを入力"></span></label>
       </div>
       <div class="row"><button class="primary" type="submit">登録</button><button type="button" data-act="dismiss">閉じる</button>
-      <span class="muted">機種が一覧にないときは、そのまま入力してください（${models.length}機種を登録済み）</span></div>
+      <span class="muted">機種・保管場所は、前回登録した内容が入っています（変更できます）。機種が一覧にないときは、そのまま入力してください（${models.length}機種を登録済み）</span></div>
     </form>`);
-  mountPick("nfModelBox",lastModel); mountPick("nfLocBox",""); mountPick("nfMemoBox","");
+  mountPick("nfModelBox",lastModel); mountPick("nfLocBox",lastLoc); mountPick("nfMemoBox","");
   setTimeout(()=>{ const s=$("nfModelBox").querySelector(".pk-in"); if(s) s.focus(); },0);
 }
-let lastModel="";
+/* 直前に登録した機種・保管場所（次の登録フォームに最初から入れる）。アプリを開き直しても残す */
+const LAST_KEY="pc_inventory_last_v1";
+let lastModel="", lastLoc="";
+try{ const x=JSON.parse(localStorage.getItem(LAST_KEY)); if(x&&typeof x==="object"){ lastModel=String(x.model||""); lastLoc=String(x.loc||""); } }catch(e){}
+function saveLast(){ try{ localStorage.setItem(LAST_KEY,JSON.stringify({model:lastModel,loc:lastLoc})); }catch(e){} }
 
 function addItem({tag,model,status,loc,memo}){
   S.items.push({tag,model,status,loc,memo,updated:nowIso(),checked:null});
-  lastModel=model;
+  lastModel=model; lastLoc=loc||""; saveLast();
   addLog(tag,"新規登録",`${model} / ${status}`);
   save(); renderAll();
 }
