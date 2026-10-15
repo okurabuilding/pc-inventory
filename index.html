@@ -158,6 +158,7 @@ textarea.lsarea{min-height:96px;resize:vertical;font-size:15px}
       <label>入荷する機種（この機種で次々に登録）<span class="pickbox" id="bulkModelBox" data-list="model" data-ph="例：Dell Latitude 5440"></span></label>
       <label>状態（全台に付けます）<select id="bulkStatus"></select></label>
       <label>保管場所<span class="pickbox" id="bulkLocBox" data-list="loc" data-ph="例：倉庫A"></span></label>
+      <label>棚番<span class="pickbox" id="bulkShelfBox" data-list="shelf" data-ph="例：A-3"></span></label>
       <label>メモ（全台に付けます）<span class="pickbox" id="bulkMemoBox" data-list="memo" data-ph="例：新品"></span></label>
     </div>
     <form class="scanrow" id="scanForm" autocomplete="off">
@@ -201,6 +202,7 @@ textarea.lsarea{min-height:96px;resize:vertical;font-size:15px}
       <label class="full">機種<span class="pickbox" id="editModelBox" data-list="model" data-ph="機種名を入力"></span></label>
       <label>状態<select id="editStatus"></select></label>
       <label>保管場所／使用者<span class="pickbox" id="editLocBox" data-list="loc" data-ph="場所・使用者を入力"></span></label>
+      <label>棚番<span class="pickbox" id="editShelfBox" data-list="shelf" data-ph="棚番を入力"></span></label>
       <label class="full">メモ<span class="pickbox" id="editMemoBox" data-list="memo" data-ph="メモを入力"></span></label>
     </div>
     <div class="row" style="justify-content:flex-end">
@@ -263,12 +265,12 @@ if(!S || !Array.isArray(S.items)) S = sampleData();
 S.minStock = S.minStock || {};
 /* プルダウンの項目（機種・保管場所／使用者・メモ）。未設定のときだけ例を入れる。「データ」タブで編集できる */
 function defaultLists(){
-  return {model:[], loc:["倉庫A","倉庫B","総務部","メーカー修理中"], memo:["液晶不良","キーボード不良","バッテリー劣化","要初期化","廃棄予定"]};
+  return {model:[], shelf:[], loc:["倉庫A","倉庫B","総務部","メーカー修理中"], memo:["液晶不良","キーボード不良","バッテリー劣化","要初期化","廃棄予定"]};
 }
 function normLists(x){
   if(!x || typeof x!=="object") return defaultLists();
   const clean=(a)=>{ const seen=new Set(), out=[]; (Array.isArray(a)?a:[]).forEach(v=>{ const s=String(v??"").trim().slice(0,60); if(s&&!seen.has(s)){ seen.add(s); out.push(s); } }); return out; };
-  return {model:clean(x.model), loc:clean(x.loc), memo:clean(x.memo)};
+  return {model:clean(x.model), loc:clean(x.loc), shelf:clean(x.shelf), memo:clean(x.memo)};
 }
 S.lists = normLists(S.lists);
 function save(){ try{ localStorage.setItem(KEY, JSON.stringify(S)); }catch(e){} markDirty(); }
@@ -407,7 +409,7 @@ function offerAddToList(listKey,value){
   value=String(value||"").trim().slice(0,60); if(!value) return;
   if((S.lists[listKey]||[]).includes(value)) return;
   const k=listKey+"|"+value; if(addDeclined.has(k)) return;
-  const label=listKey==="loc"?"保管場所／使用者":"メモ";
+  const label=listKey==="loc"?"保管場所／使用者":(listKey==="shelf"?"棚番":"メモ");
   if(confirm(`「${value}」は、${label}のプルダウンの項目にありません。
 項目に追加しますか？
 （追加すると、次回から候補に出ます）`)){
@@ -415,7 +417,7 @@ function offerAddToList(listKey,value){
   }else addDeclined.add(k);
 }
 function remountBulkPicks(){   // 一括入荷の欄：入力中の値を保ったまま、候補だけ更新
-  ["bulkModelBox","bulkLocBox","bulkMemoBox"].forEach(id=>{ const box=$(id); if(!box) return; if(box.querySelector(".pk-in")){ /* 候補は開くたびに作り直すので、再描画は不要 */ } else mountPick(id,""); });
+  ["bulkModelBox","bulkLocBox","bulkShelfBox","bulkMemoBox"].forEach(id=>{ const box=$(id); if(!box) return; if(box.querySelector(".pk-in")){ /* 候補は開くたびに作り直すので、再描画は不要 */ } else mountPick(id,""); });
 }
 
 function tagHint(tag){
@@ -568,7 +570,7 @@ function handleScan(tag){
       if(it.status==="廃棄"){ beep(false); showResult("warn",`<h3>廃棄済みの機器です</h3><div class="tagbig">${esc(tag)}</div><div>${esc(it.model)} ／ 台帳では「廃棄」です。現物が残っていないか確認してください。</div>`); return; }
       const already = it.checked && S.stocktakeStart && it.checked>=S.stocktakeStart;
       it.checked=nowIso(); addLog(tag,"棚卸確認"); save(); beep(true);
-      showResult("ok",`<h3>${already?"確認済み（再読み取り）":"棚卸 確認OK"}</h3><div class="tagbig">${esc(tag)}</div><div>${esc(it.model)} ／ ${badge(it.status)} ／ ${esc(it.loc||"場所未設定")}</div>`);
+      showResult("ok",`<h3>${already?"確認済み（再読み取り）":"棚卸 確認OK"}</h3><div class="tagbig">${esc(tag)}</div><div>${esc(it.model)} ／ ${badge(it.status)} ／ ${esc(it.loc||"場所未設定")}${it.shelf?` ／ 棚番：${esc(it.shelf)}`:""}</div>`);
       renderAll();
     }else{
       beep(false);
@@ -581,8 +583,8 @@ function handleScan(tag){
     if(!model){ beep(false); showResult("ng","<h3>機種が未選択です</h3><div>上の「入荷する機種」を選ぶか入力してから読み取ってください。</div>"); $("bulkModelBox").querySelector(".pk-in").focus(); return; }
     if(it){ beep(false); showResult("warn",`<h3>登録済みです</h3><div class="tagbig">${esc(tag)}</div><div>${esc(it.model)} ／ ${badge(it.status)}</div>`); return; }
     const status=$("bulkStatus").value||"在庫";
-    addItem({tag,model,status,loc:pickVal("bulkLocBox"),memo:pickVal("bulkMemoBox")});
-    offerAddToList("loc",pickVal("bulkLocBox")); offerAddToList("memo",pickVal("bulkMemoBox"));
+    addItem({tag,model,status,loc:pickVal("bulkLocBox"),shelf:pickVal("bulkShelfBox"),memo:pickVal("bulkMemoBox")});
+    offerAddToList("loc",pickVal("bulkLocBox")); offerAddToList("shelf",pickVal("bulkShelfBox")); offerAddToList("memo",pickVal("bulkMemoBox"));
     beep(true);
     const cnt=S.items.filter(i=>i.model===model&&i.status!=="廃棄").length;
     const common=pickVal("bulkMemoBox");
@@ -621,7 +623,7 @@ function showItem(it){
   const btns = STATUS.filter(s=>s!==it.status).map(s=>`<button data-act="status" data-tag="${esc(it.tag)}" data-st="${s}">${s}にする</button>`).join("");
   showResult("ok",`<h3>登録済みの機器</h3>
     <div class="tagbig">${esc(it.tag)}</div>
-    <div>${esc(it.model)} ／ ${badge(it.status)} ／ ${esc(it.loc||"場所未設定")}${it.memo?` ／ メモ：${esc(it.memo)}`:""}</div>
+    <div>${esc(it.model)} ／ ${badge(it.status)} ／ ${esc(it.loc||"場所未設定")}${it.shelf?` ／ 棚番：${esc(it.shelf)}`:""}${it.memo?` ／ メモ：${esc(it.memo)}`:""}</div>
     <div class="muted">最終更新 ${fmt(it.updated)}</div>
     <div class="row">${btns}<button data-act="edit" data-tag="${esc(it.tag)}">詳細編集</button></div>`);
 }
@@ -636,23 +638,24 @@ function showUnknown(tag,fromStocktake,hint){
         <label class="full">機種<span class="pickbox" id="nfModelBox" data-list="model" data-ph="例：Dell Latitude 5440"></span></label>
         <label>状態<select id="nfStatus">${STATUS.map(s=>`<option>${s}</option>`).join("")}</select></label>
         <label>保管場所／使用者<span class="pickbox" id="nfLocBox" data-list="loc" data-ph="場所・使用者を入力"></span></label>
+        <label>棚番<span class="pickbox" id="nfShelfBox" data-list="shelf" data-ph="棚番を入力"></span></label>
         <label class="full">メモ<span class="pickbox" id="nfMemoBox" data-list="memo" data-ph="メモを入力"></span></label>
       </div>
       <div class="row"><button class="primary" type="submit">登録</button><button type="button" data-act="dismiss">閉じる</button>
       <span class="muted">機種・保管場所は、前回登録した内容が入っています（変更できます）。機種が一覧にないときは、そのまま入力してください（${models.length}機種を登録済み）</span></div>
     </form>`);
-  mountPick("nfModelBox",lastModel); mountPick("nfLocBox",lastLoc); mountPick("nfMemoBox","");
+  mountPick("nfModelBox",lastModel); mountPick("nfLocBox",lastLoc); mountPick("nfShelfBox",lastShelf); mountPick("nfMemoBox","");
   setTimeout(()=>{ const s=$("nfModelBox").querySelector(".pk-in"); if(s) s.focus(); },0);
 }
 /* 直前に登録した機種・保管場所（次の登録フォームに最初から入れる）。アプリを開き直しても残す */
 const LAST_KEY="pc_inventory_last_v1";
-let lastModel="", lastLoc="";
-try{ const x=JSON.parse(localStorage.getItem(LAST_KEY)); if(x&&typeof x==="object"){ lastModel=String(x.model||""); lastLoc=String(x.loc||""); } }catch(e){}
-function saveLast(){ try{ localStorage.setItem(LAST_KEY,JSON.stringify({model:lastModel,loc:lastLoc})); }catch(e){} }
+let lastModel="", lastLoc="", lastShelf="";
+try{ const x=JSON.parse(localStorage.getItem(LAST_KEY)); if(x&&typeof x==="object"){ lastModel=String(x.model||""); lastLoc=String(x.loc||""); lastShelf=String(x.shelf||""); } }catch(e){}
+function saveLast(){ try{ localStorage.setItem(LAST_KEY,JSON.stringify({model:lastModel,loc:lastLoc,shelf:lastShelf})); }catch(e){} }
 
-function addItem({tag,model,status,loc,memo}){
-  S.items.push({tag,model,status,loc,memo,updated:nowIso(),checked:null});
-  lastModel=model; lastLoc=loc||""; saveLast();
+function addItem({tag,model,status,loc,shelf,memo}){
+  S.items.push({tag,model,status,loc,shelf:shelf||"",memo,updated:nowIso(),checked:null});
+  lastModel=model; lastLoc=loc||""; lastShelf=shelf||""; saveLast();
   addLog(tag,"新規登録",`${model} / ${status}`);
   save(); renderAll();
 }
@@ -663,9 +666,9 @@ $("result").addEventListener("submit",e=>{
   const f=e.target, tag=f.dataset.tag;
   const model=pickVal("nfModelBox");
   if(!model){ alert("機種を選ぶか、入力してください。"); return; }
-  const nfLoc=pickVal("nfLocBox"), nfMemo=pickVal("nfMemoBox");
-  addItem({tag,model,status:$("nfStatus").value,loc:nfLoc,memo:nfMemo});
-  offerAddToList("loc",nfLoc); offerAddToList("memo",nfMemo);
+  const nfLoc=pickVal("nfLocBox"), nfShelf=pickVal("nfShelfBox"), nfMemo=pickVal("nfMemoBox");
+  addItem({tag,model,status:$("nfStatus").value,loc:nfLoc,shelf:nfShelf,memo:nfMemo});
+  offerAddToList("loc",nfLoc); offerAddToList("shelf",nfShelf); offerAddToList("memo",nfMemo);
   if(f.dataset.st==="1"){ const it=find(tag); it.checked=nowIso(); save(); }
   showResult("ok",`<h3>登録しました</h3><div class="tagbig">${esc(tag)}</div><div>${esc(model)}</div>`);
   $("scanInput").focus();
@@ -706,7 +709,7 @@ function openEdit(tag){
   const it=find(tag); if(!it) return;
   editingTag=tag;
   $("editTag").textContent=tag;
-  mountPick("editModelBox",it.model); mountPick("editLocBox",it.loc||""); mountPick("editMemoBox",it.memo||"");
+  mountPick("editModelBox",it.model); mountPick("editLocBox",it.loc||""); mountPick("editShelfBox",it.shelf||""); mountPick("editMemoBox",it.memo||"");
   $("editStatus").value=it.status;
   $("editDlg").showModal();
 }
@@ -715,15 +718,17 @@ $("editForm").addEventListener("submit",(ev)=>{
   const it=find(editingTag); if(!it) return;
   const model=pickVal("editModelBox");
   if(!model){ ev.preventDefault(); alert("機種を選ぶか、入力してください。"); return; }
-  const changes=[], loc=pickVal("editLocBox"), memo=pickVal("editMemoBox"), oldLoc=it.loc||"", oldMemo=it.memo||"";
+  const changes=[], loc=pickVal("editLocBox"), shelf=pickVal("editShelfBox"), memo=pickVal("editMemoBox"), oldLoc=it.loc||"", oldShelf=it.shelf||"", oldMemo=it.memo||"";
   if(it.model!==model) changes.push(`機種 ${it.model} → ${model}`);
   if(it.status!==$("editStatus").value) changes.push(`状態 ${it.status} → ${$("editStatus").value}`);
   if((it.loc||"")!==loc) changes.push("場所変更");
-  it.model=model; it.status=$("editStatus").value; it.loc=loc; it.memo=memo;
+  if((it.shelf||"")!==shelf) changes.push(`棚番 ${it.shelf||"なし"} → ${shelf||"なし"}`);
+  it.model=model; it.status=$("editStatus").value; it.loc=loc; it.shelf=shelf; it.memo=memo;
   it.updated=nowIso();
   if(changes.length) addLog(editingTag,"編集",changes.join(" / "));
   save(); renderAll();
   if(loc!==oldLoc) offerAddToList("loc",loc);
+  if(shelf!==oldShelf) offerAddToList("shelf",shelf);
   if(memo!==oldMemo) offerAddToList("memo",memo);
 });
 
@@ -778,7 +783,7 @@ function renderModels(){
     const low=min>0 && c["在庫"]<min;
     const bar=held? STATUS.filter(s=>s!=="廃棄").map(s=>`<i style="width:${c[s]/held*100}%;background:${STATUS_COLOR[s]}" title="${s} ${c[s]}"></i>`).join("") : "";
     const open=openModels.has(m);
-    const chips = open ? `<tr><td colspan="10"><div class="chips">${list.slice().sort((a,b)=>STATUS.indexOf(a.status)-STATUS.indexOf(b.status)).map(i=>`<span class="chip" data-jump="${esc(i.tag)}" title="台帳で開く">${badge(i.status)} <span class="tag">${esc(i.tag)}</span><small>${esc(i.loc||"")}</small></span>`).join("")}</div></td></tr>` : "";
+    const chips = open ? `<tr><td colspan="10"><div class="chips">${list.slice().sort((a,b)=>STATUS.indexOf(a.status)-STATUS.indexOf(b.status)).map(i=>`<span class="chip" data-jump="${esc(i.tag)}" title="台帳で開く">${badge(i.status)} <span class="tag">${esc(i.tag)}</span><small>${esc([i.loc,i.shelf].filter(Boolean).join(" / "))}</small></span>`).join("")}</div></td></tr>` : "";
     return `<tr class="model-row" data-model="${esc(m)}">
       <td><b>${open?"▼":"▶"} ${esc(m)}</b> ${low?`<span class="badge b-low">在庫不足</span>`:""}</td>
       <td class="num">${held}</td><td class="num">${c["在庫"]}</td><td class="num">${c["貸出中"]}</td><td class="num">${c["修理中"]}</td><td class="num">${c["動作未確認"]}</td><td class="num">${c["故障"]}</td><td class="num">${c["廃棄"]}</td>
@@ -808,11 +813,11 @@ function renderLedger(){
   const q=ledgerQ.trim().toUpperCase();
   const list=S.items.filter(i=>
     (!ledgerStatus||i.status===ledgerStatus)&&(!ledgerModel||i.model===ledgerModel)&&
-    (!q||(i.tag+" "+i.model+" "+(i.loc||"")+" "+(i.memo||"")).toUpperCase().includes(q))
+    (!q||(i.tag+" "+i.model+" "+(i.loc||"")+" "+(i.shelf||"")+" "+(i.memo||"")).toUpperCase().includes(q))
   ).sort((a,b)=>a.model.localeCompare(b.model)||a.tag.localeCompare(b.tag));
   const rows=list.map(i=>`<tr>
     <td class="tag">${esc(i.tag)}</td><td>${esc(i.model)}</td>
-    <td>${badge(i.status)}</td><td>${esc(i.loc||"")}</td><td>${esc(i.memo||"")}</td><td class="muted">${fmt(i.updated)}</td>
+    <td>${badge(i.status)}</td><td>${esc(i.loc||"")}</td><td>${esc(i.shelf||"")}</td><td>${esc(i.memo||"")}</td><td class="muted">${fmt(i.updated)}</td>
     <td style="white-space:nowrap"><button class="sm" data-edit="${esc(i.tag)}">編集</button> <button class="sm danger" data-del="${esc(i.tag)}">削除</button></td></tr>`).join("");
   const keepFocus = document.activeElement && document.activeElement.id==="fQ";
   $("tab-ledger").innerHTML=`<div class="filters">
@@ -820,7 +825,7 @@ function renderLedger(){
     <select id="fModel"><option value="">全機種</option>${models.map(m=>`<option ${m===ledgerModel?"selected":""}>${esc(m)}</option>`).join("")}</select>
     <select id="fStatus"><option value="">全状態</option>${STATUS.map(s=>`<option ${s===ledgerStatus?"selected":""}>${s}</option>`).join("")}</select></div>
     <div class="muted" style="margin-bottom:6px">${list.length} 件</div>
-    ${list.length?`<div class="tablewrap"><table><thead><tr><th>サービスタグ</th><th>機種</th><th>状態</th><th>場所／使用者</th><th>メモ</th><th>更新</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`:`<div class="empty">該当する機器はありません。</div>`}`;
+    ${list.length?`<div class="tablewrap"><table><thead><tr><th>サービスタグ</th><th>機種</th><th>状態</th><th>場所／使用者</th><th>棚番</th><th>メモ</th><th>更新</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`:`<div class="empty">該当する機器はありません。</div>`}`;
   if(keepFocus){ const f=$("fQ"); f.focus(); f.setSelectionRange(f.value.length,f.value.length); }
 }
 $("tab-ledger").addEventListener("input",e=>{ if(e.target.id==="fQ"){ ledgerQ=e.target.value; renderLedger(); } });
@@ -854,7 +859,7 @@ function renderStocktake(){
     <div><b>${done} / ${target.length} 台確認済み（${pct}%）</b></div>
     <div class="progress"><i style="width:${pct}%"></i></div>
     <h3 style="font-size:15px;margin:12px 0 4px">未確認 ${rest.length} 台</h3>
-    ${rest.length?`<div class="tablewrap"><table><thead><tr><th>サービスタグ</th><th>機種</th><th>状態</th><th>場所／使用者</th></tr></thead><tbody>${rest.map(i=>`<tr><td class="tag">${esc(i.tag)}</td><td>${esc(i.model)}</td><td>${badge(i.status)}</td><td>${esc(i.loc||"")}</td></tr>`).join("")}</tbody></table></div>`:`<div class="empty">すべて確認できました 🎉</div>`}`;
+    ${rest.length?`<div class="tablewrap"><table><thead><tr><th>サービスタグ</th><th>機種</th><th>状態</th><th>場所／使用者</th><th>棚番</th></tr></thead><tbody>${rest.map(i=>`<tr><td class="tag">${esc(i.tag)}</td><td>${esc(i.model)}</td><td>${badge(i.status)}</td><td>${esc(i.loc||"")}</td><td>${esc(i.shelf||"")}</td></tr>`).join("")}</tbody></table></div>`:`<div class="empty">すべて確認できました 🎉</div>`}`;
 }
 $("tab-stocktake").addEventListener("click",e=>{ if(e.target.id==="stStart") startStocktake(!!S.stocktakeStart); });
 
@@ -899,6 +904,7 @@ function renderData(){
       <div class="muted">1行に1項目で書いて「保存」を押すと、登録・編集・まとめて入荷のプルダウンに反映されます。一覧にないものは、いつでもそのまま入力できます。入力欄をタップすると候補が出て、文字を入れると絞り込まれます。</div>
       <div class="formgrid">
         <label class="full">保管場所／使用者<textarea class="lsarea" id="lsLoc" placeholder="例：&#10;倉庫A&#10;総務部">${esc(S.lists.loc.join("\n"))}</textarea></label>
+        <label class="full">棚番<textarea class="lsarea" id="lsShelf" placeholder="例：&#10;A-1&#10;A-2">${esc((S.lists.shelf||[]).join("\n"))}</textarea></label>
         <label class="full">メモ<textarea class="lsarea" id="lsMemo" placeholder="例：&#10;液晶不良&#10;要初期化">${esc(S.lists.memo.join("\n"))}</textarea></label>
         <label class="full">機種（登録済みの機種は自動で候補に出ます。まだ登録していない機種を、事前に入れておけます）<textarea class="lsarea" id="lsModel" placeholder="例：&#10;Dell Latitude 5440">${esc(S.lists.model.join("\n"))}</textarea></label>
       </div>
@@ -933,8 +939,8 @@ function parseCSV(text){
   return rows;
 }
 async function exportCsv(){
-  const head=["サービスタグ","機種","状態","場所","メモ","更新日時"];
-  const lines=[head].concat(S.items.slice().sort((a,b)=>a.model.localeCompare(b.model)||a.tag.localeCompare(b.tag)).map(i=>[i.tag,i.model,i.status,i.loc||"",i.memo||"",i.updated]));
+  const head=["サービスタグ","機種","状態","場所","棚番","メモ","更新日時"];
+  const lines=[head].concat(S.items.slice().sort((a,b)=>a.model.localeCompare(b.model)||a.tag.localeCompare(b.tag)).map(i=>[i.tag,i.model,i.status,i.loc||"",i.shelf||"",i.memo||"",i.updated]));
   const blob=new Blob(["﻿"+lines.map(r=>r.map(csvCell).join(",")).join("\r\n")],{type:"text/csv;charset=utf-8"});
   const fname=`pc_inventory_${new Date().toISOString().slice(0,10)}.csv`;
   const done=(m)=>{ S.lastBackup=nowIso(); save(); renderAll(); return m; };
@@ -977,17 +983,17 @@ $("tab-data").addEventListener("change",async e=>{
   const rows=parseCSV(text);
   const head=(rows.shift()||[]).map(h=>h.trim());
   const col=(n)=>head.indexOf(n);
-  const ci={tag:col("サービスタグ"),model:col("機種"),st:col("状態"),loc:col("場所"),memo:col("メモ")};
+  const ci={tag:col("サービスタグ"),model:col("機種"),st:col("状態"),loc:col("場所"),shelf:col("棚番"),memo:col("メモ")};
   if(ci.tag<0||ci.model<0){ $("dataMsg").textContent="取り込めません：1行目に「サービスタグ」「機種」の列名が必要です。"; e.target.value=""; return; }
   let add=0,upd=0,skip=0;
   rows.forEach(r=>{
     const tag=normTag(r[ci.tag]), model=(r[ci.model]||"").trim();
     if(!tag||!model){ skip++; return; }
     const st=STATUS.includes((r[ci.st]||"").trim())?r[ci.st].trim():"在庫";
-    const loc=ci.loc>=0?(r[ci.loc]||"").trim():"", memo=ci.memo>=0?(r[ci.memo]||"").trim():"";
+    const loc=ci.loc>=0?(r[ci.loc]||"").trim():"", memo=ci.memo>=0?(r[ci.memo]||"").trim():"", shelf=ci.shelf>=0?(r[ci.shelf]||"").trim():undefined;   // 棚番の列が無いCSVでは、既存の棚番を消さない
     const it=find(tag);
-    if(it){ Object.assign(it,{model,status:st,loc,memo,updated:nowIso()}); upd++; }
-    else { S.items.push({tag,model,status:st,loc,memo,updated:nowIso(),checked:null}); add++; }
+    if(it){ Object.assign(it,{model,status:st,loc,memo,updated:nowIso()}); if(shelf!==undefined) it.shelf=shelf; upd++; }
+    else { S.items.push({tag,model,status:st,loc,shelf:shelf||"",memo,updated:nowIso(),checked:null}); add++; }
   });
   addLog("-","CSV取り込み",`追加${add} / 更新${upd} / 除外${skip}`);
   save(); renderAll();
@@ -1038,7 +1044,7 @@ async function api(action,extra,creds){
 }
 function syncPayload(){
   return {
-    items:S.items.map(i=>({tag:i.tag,model:i.model,status:i.status,loc:i.loc||"",memo:i.memo||"",updated:i.updated||"",checked:i.checked||""})),
+    items:S.items.map(i=>({tag:i.tag,model:i.model,status:i.status,loc:i.loc||"",shelf:i.shelf||"",memo:i.memo||"",updated:i.updated||"",checked:i.checked||""})),
     log:S.log.slice(0,200), minStock:S.minStock||{}, stocktakeStart:S.stocktakeStart||"", lists:S.lists
   };
 }
@@ -1060,7 +1066,7 @@ async function pushNow(manual,force){
       }
     }
     const j=await api("push",{force:!!force,data:syncPayload()});
-    if(j.ok){ SY.lastOk=nowIso(); SY.lastErr=""; }
+    if(j.ok){ SY.lastOk=nowIso(); SY.lastErr=""; SY.ver=j.ver||1; }
     else{ SY.dirty=true; SY.lastErr=syErrText(j); }
   }catch(e){ SY.dirty=true; SY.lastErr=e&&e.j?syErrText(e.j):netErr(e); }
   syBusy=false; sySave(); renderSync();
@@ -1072,7 +1078,7 @@ function cleanItem(x){
   if(!tag||!model) return null;
   const st=STATUS.includes(String(x.status).trim())?String(x.status).trim():"在庫";
   const ts=(v)=>{ const s=String(v??"").trim(); return s&&!isNaN(new Date(s))?new Date(s).toISOString():""; };
-  return {tag,model,status:st,loc:String(x.loc??"").trim(),memo:String(x.memo??"").trim(),updated:ts(x.updated)||nowIso(),checked:ts(x.checked)||null};
+  return {tag,model,status:st,loc:String(x.loc??"").trim(),shelf:String(x.shelf??"").trim(),memo:String(x.memo??"").trim(),updated:ts(x.updated)||nowIso(),checked:ts(x.checked)||null};
 }
 async function restoreNow(){
   if(!syncOn()) return "先に接続先URLと合言葉を設定してください。";
@@ -1083,6 +1089,11 @@ async function restoreNow(){
   if(!j.ok){ renderSync(); return syErrText(j); }
   const seen=new Set(), items=[];
   (j.items||[]).forEach(x=>{ const it=cleanItem(x); if(it&&!seen.has(it.tag)){ seen.add(it.tag); items.push(it); } });
+  if((j.ver||1)<2){   // 古いコードは、棚番を保存・返信しない。端末にある棚番を、同じタグに引き継ぐ
+    const ls=new Map(S.items.map(i=>[i.tag,i.shelf||""]));
+    items.forEach(it=>{ if(!it.shelf&&ls.get(it.tag)) it.shelf=ls.get(it.tag); });
+  }
+  SY.ver=j.ver||1; sySave();
   if(!items.length){ renderSync(); return "スプレッドシートに台帳データがありません（復元できるものがありません）。"; }
   if(!confirm(`この端末のデータ（${S.items.length}台）を、スプレッドシートの内容（${items.length}台）で置き換えます。よろしいですか？`)){ renderSync(); return "復元をキャンセルしました。"; }
   const log=(Array.isArray(j.log)?j.log:[]).slice(0,200).map(l=>({t:String(l.t||""),tag:String(l.tag||""),act:String(l.act||""),note:String(l.note||"")}));
@@ -1106,7 +1117,8 @@ function renderSync(){
   const s=syncState(), bar=$("syncBar");
   bar.className="syncbar "+s.cls; bar.textContent=s.t;
   const d=$("syDetail");
-  if(d) d.textContent=!syncOn()?"":(SY.lastErr?"⚠ "+SY.lastErr:(SY.lastOk?"最後に保存できた時刻："+fmt(SY.lastOk):"まだ1回も送信していません。"));
+  const shelfWarn=(syncOn()&&SY.ver&&SY.ver<2&&S.items.some(i=>i.shelf))?"　⚠ 棚番をクラウドに保存するには、スプレッドシート側のコードの更新が必要です（今は、この端末にだけ保存されています）。":"";
+  if(d) d.textContent=!syncOn()?"":(SY.lastErr?"⚠ "+SY.lastErr:(SY.lastOk?"最後に保存できた時刻："+fmt(SY.lastOk):"まだ1回も送信していません。"))+shelfWarn;
 }
 $("syncBar").addEventListener("click",()=>showTab("data"));
 window.addEventListener("online",()=>{ if(SY.dirty) pushNow(); });
@@ -1125,7 +1137,7 @@ $("tab-data").addEventListener("click",async e=>{
       const p=await api("ping",{}, {url,key});
       if(!p.ok){ msg(syErrText(p)); return; }
       const changed=(url!==SY.url||key!==SY.key);
-      SY.url=url; SY.key=key; if(changed){ SY.lastOk=null; SY.dirty=false; } SY.lastErr=""; sySave(); renderSync();
+      SY.url=url; SY.key=key; SY.ver=p.ver||1; if(changed){ SY.lastOk=null; SY.dirty=false; } SY.lastErr=""; sySave(); renderSync();
       msg(`接続できました（スプレッドシート「${p.sheet}」・台帳 ${p.rows} 台）。`+(p.rows>0&&(sampleLeft()||!S.items.length)?" 既にデータがあります。「スプレッドシートから復元」を押してください。":" 次に「今すぐ送信」を押すと、この端末のデータを送ります。"));
     }catch(err){ msg(netErr(err)); }
   }
@@ -1145,11 +1157,11 @@ $("tab-data").addEventListener("click",async e=>{
 $("tab-data").addEventListener("click",e=>{
   if(e.target.id!=="lsSave") return;
   const lines=(id)=>$(id).value.split(/\r?\n/);
-  S.lists=normLists({loc:lines("lsLoc"),memo:lines("lsMemo"),model:lines("lsModel")});
+  S.lists=normLists({loc:lines("lsLoc"),shelf:lines("lsShelf"),memo:lines("lsMemo"),model:lines("lsModel")});
   save(); remountBulkPicks();
   const L=S.lists;
-  $("lsMsg").textContent=`保存しました（保管場所 ${L.loc.length}・メモ ${L.memo.length}・機種 ${L.model.length} 項目）。`;
-  ["lsLoc","lsMemo","lsModel"].forEach((id,i)=>{ $(id).value=[L.loc,L.memo,L.model][i].join("\n"); });
+  $("lsMsg").textContent=`保存しました（保管場所 ${L.loc.length}・棚番 ${L.shelf.length}・メモ ${L.memo.length}・機種 ${L.model.length} 項目）。`;
+  ["lsLoc","lsShelf","lsMemo","lsModel"].forEach((id,i)=>{ $(id).value=[L.loc,L.shelf,L.memo,L.model][i].join("\n"); });
 });
 
 /* ---------- 文字で読み取る（OCR：Tesseract.js 5.1.1。同じ場所に置いたファイルだけを使い、外部には接続しない） ---------- */
@@ -1375,7 +1387,7 @@ $("ocrFile").addEventListener("change",e=>{ const f=e.target.files[0]; e.target.
    iPhoneのホーム画面アプリは、公開した新しい版を取り込まず、古いページを使い続けることがある（保存期間は10分）。
    起動時とアプリに戻ったときに version.json を確認し、版が違えば、URLに「?v=版番号」を付けて開き直す。
    データ（端末内の保存）は、URLが変わっても消えない。BUILD は公開時に書き換える（開発中は "dev" で、確認しない） */
-const BUILD="20261015-105116";
+const BUILD="20261015-112920";
 let updCheckedAt=0;
 async function checkUpdate(force){
   try{

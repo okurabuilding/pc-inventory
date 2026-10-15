@@ -67,10 +67,10 @@ input[type=text],input[type=search],input[type=password],select{font:inherit;pad
 .mrow .n.zero{color:var(--sub);opacity:.5}
 /* 一覧：PCは表の形、スマホはカード */
 .filters{display:grid;grid-template-columns:2fr 1fr 1.4fr 1.2fr;gap:8px;margin-bottom:10px}
-.lhead,.lrow{display:grid;grid-template-columns:120px minmax(170px,1.5fr) 118px minmax(120px,1fr) minmax(140px,1.2fr) 134px;gap:10px;align-items:center;padding:8px 10px}
+.lhead,.lrow{display:grid;grid-template-columns:120px minmax(170px,1.5fr) 118px minmax(120px,1fr) 86px minmax(140px,1.2fr) 134px;gap:10px;align-items:center;padding:8px 10px}
 .lhead{font-size:12px;color:var(--sub);font-weight:600;border-bottom:2px solid var(--line)}
 .lrow{border-bottom:1px solid var(--line)}
-.lrow .c-memo,.lrow .c-loc{word-break:break-all}
+.lrow .c-memo,.lrow .c-loc,.lrow .c-shelf{word-break:break-all}
 .lrow .c-upd{font-size:12px;color:var(--sub)}
 .more{text-align:center;padding:12px}
 .empty{padding:24px;text-align:center;color:var(--sub)}
@@ -97,11 +97,12 @@ dialog::backdrop{background:rgba(0,0,0,.4)}
   .mrow .n::before{content:attr(data-l)" ";font-size:12px;color:var(--sub);font-weight:400;opacity:1}
   .mrow .n{background:var(--gray-bg);border-radius:999px;padding:1px 10px;font-size:13px}
   .mrow .bar{flex:1 1 100%}
-  .lrow{grid-template-columns:1fr auto;grid-template-areas:"tag st" "model model" "loc loc" "memo memo" "upd upd";gap:2px 8px;padding:10px 4px}
+  .lrow{grid-template-columns:1fr auto;grid-template-areas:"tag st" "model model" "loc loc" "shelf shelf" "memo memo" "upd upd";gap:2px 8px;padding:10px 4px}
   .lrow .c-tag{grid-area:tag}.lrow .c-st{grid-area:st;text-align:right}.lrow .c-model{grid-area:model;font-weight:600}
-  .lrow .c-loc{grid-area:loc;font-size:13px}.lrow .c-memo{grid-area:memo;font-size:13px;color:var(--sub)}.lrow .c-upd{grid-area:upd}
-  .lrow .c-loc:empty,.lrow .c-memo:empty{display:none}
+  .lrow .c-loc{grid-area:loc;font-size:13px}.lrow .c-shelf{grid-area:shelf;font-size:13px}.lrow .c-memo{grid-area:memo;font-size:13px;color:var(--sub)}.lrow .c-upd{grid-area:upd}
+  .lrow .c-loc:empty,.lrow .c-shelf:empty,.lrow .c-memo:empty{display:none}
   .lrow .c-loc::before{content:"場所／使用者：";color:var(--sub)}
+  .lrow .c-shelf::before{content:"棚番：";color:var(--sub)}
   .lrow .c-memo::before{content:"メモ："}
   .tabs button{flex:1}
 }
@@ -143,7 +144,7 @@ dialog::backdrop{background:rgba(0,0,0,.4)}
       <div id="tab-models"></div>
       <div id="tab-list" hidden>
         <div class="filters">
-          <input type="search" id="fq" placeholder="サービスタグ・機種・場所・メモで検索">
+          <input type="search" id="fq" placeholder="サービスタグ・機種・場所・棚番・メモで検索">
           <select id="fst"></select><select id="fmodel"></select><select id="floc"></select>
         </div>
         <div class="muted" id="fcount" style="margin-bottom:4px"></div>
@@ -168,7 +169,7 @@ dialog::backdrop{background:rgba(0,0,0,.4)}
 <script>
 "use strict";
 /* 閲覧専用ページ。データはページに入れず、スプレッドシート（Apps Script）から読み込む。書き込みはしない */
-const BUILD="20261015-105116";
+const BUILD="20261015-112920";
 const STATUS=["在庫","貸出中","修理中","動作未確認","故障","廃棄"];
 const SCOL={"在庫":"var(--c-stock)","貸出中":"var(--c-loan)","修理中":"var(--c-repair)","動作未確認":"var(--c-unk)","故障":"var(--c-broken)","廃棄":"var(--c-scrap)"};
 const URL_RE=/^https:\/\/script\.google\.com\/(a\/macros\/[^/]+\/|macros\/)s\/[A-Za-z0-9_-]+\/exec$/;
@@ -208,7 +209,7 @@ function cleanItems(arr){
   (Array.isArray(arr)?arr:[]).forEach(x=>{
     const tag=String(x&&x.tag||"").trim().toUpperCase(); if(!tag||seen.has(tag)) return; seen.add(tag);
     const st=STATUS.includes(String(x.status).trim())?String(x.status).trim():"在庫";
-    out.push({tag,model:String(x.model||"").trim(),status:st,loc:String(x.loc||"").trim(),memo:String(x.memo||"").trim(),updated:String(x.updated||"")});
+    out.push({tag,model:String(x.model||"").trim(),status:st,loc:String(x.loc||"").trim(),shelf:String(x.shelf||"").trim(),memo:String(x.memo||"").trim(),updated:String(x.updated||"")});
   });
   return out;
 }
@@ -273,15 +274,15 @@ function renderFilters(){
 }
 function filtered(){
   const q=norm(view.q.trim());
-  return DATA.items.filter(i=>(!view.st||i.status===view.st)&&(!view.model||i.model===view.model)&&(!view.loc||i.loc===view.loc)&&(!q||norm(i.tag+" "+i.model+" "+i.loc+" "+i.memo).includes(q)))
+  return DATA.items.filter(i=>(!view.st||i.status===view.st)&&(!view.model||i.model===view.model)&&(!view.loc||i.loc===view.loc)&&(!q||norm(i.tag+" "+i.model+" "+i.loc+" "+i.shelf+" "+i.memo).includes(q)))
     .sort((a,b)=>a.model.localeCompare(b.model)||a.tag.localeCompare(b.tag));
 }
 function renderList(){
   const all=filtered(), shown=all.slice(0,view.limit);
   $("fcount").textContent=`${all.length} 件${all.length>shown.length?`（先頭 ${shown.length} 件を表示）`:""}`;
   if(!all.length){ $("listbox").innerHTML=`<div class="empty">該当する機器はありません。</div>`; return; }
-  $("listbox").innerHTML=`<div class="lhead"><span>サービスタグ</span><span>機種</span><span>状態</span><span>場所／使用者</span><span>メモ</span><span>更新</span></div>`
-    +shown.map(i=>`<div class="lrow"><span class="c-tag tag">${esc(i.tag)}</span><span class="c-model">${esc(i.model)}</span><span class="c-st">${badge(i.status)}</span><span class="c-loc">${esc(i.loc)}</span><span class="c-memo">${esc(i.memo)}</span><span class="c-upd">${esc(fmt(i.updated))}</span></div>`).join("")
+  $("listbox").innerHTML=`<div class="lhead"><span>サービスタグ</span><span>機種</span><span>状態</span><span>場所／使用者</span><span>棚番</span><span>メモ</span><span>更新</span></div>`
+    +shown.map(i=>`<div class="lrow"><span class="c-tag tag">${esc(i.tag)}</span><span class="c-model">${esc(i.model)}</span><span class="c-st">${badge(i.status)}</span><span class="c-loc">${esc(i.loc)}</span><span class="c-shelf">${esc(i.shelf)}</span><span class="c-memo">${esc(i.memo)}</span><span class="c-upd">${esc(fmt(i.updated))}</span></div>`).join("")
     +(all.length>shown.length?`<div class="more"><button id="bMore">さらに ${Math.min(200,all.length-shown.length)} 件を表示</button></div>`:"");
 }
 
@@ -297,7 +298,7 @@ $("bRefresh").addEventListener("click",()=>refresh());
 $("bCsv").addEventListener("click",()=>{
   if(!DATA) return;
   const cell=(v)=>{ v=String(v??""); return /[",\n\r]/.test(v)?`"${v.replace(/"/g,'""')}"`:v; };
-  const lines=[["サービスタグ","機種","状態","場所","メモ","更新日時"]].concat(filtered().map(i=>[i.tag,i.model,i.status,i.loc,i.memo,i.updated]));
+  const lines=[["サービスタグ","機種","状態","場所","棚番","メモ","更新日時"]].concat(filtered().map(i=>[i.tag,i.model,i.status,i.loc,i.shelf,i.memo,i.updated]));
   const blob=new Blob(["﻿"+lines.map(r=>r.map(cell).join(",")).join("\r\n")],{type:"text/csv;charset=utf-8"});
   const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=`pc_inventory_view_${new Date().toISOString().slice(0,10)}.csv`; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000);
 });
