@@ -168,7 +168,7 @@ dialog::backdrop{background:rgba(0,0,0,.4)}
 <script>
 "use strict";
 /* 閲覧専用ページ。データはページに入れず、スプレッドシート（Apps Script）から読み込む。書き込みはしない */
-const BUILD="20261014-191850";
+const BUILD="20261015-105116";
 const STATUS=["在庫","貸出中","修理中","動作未確認","故障","廃棄"];
 const SCOL={"在庫":"var(--c-stock)","貸出中":"var(--c-loan)","修理中":"var(--c-repair)","動作未確認":"var(--c-unk)","故障":"var(--c-broken)","廃棄":"var(--c-scrap)"};
 const URL_RE=/^https:\/\/script\.google\.com\/(a\/macros\/[^/]+\/|macros\/)s\/[A-Za-z0-9_-]+\/exec$/;

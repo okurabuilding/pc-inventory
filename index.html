@@ -28,6 +28,7 @@
   }
 }
 *{box-sizing:border-box}
+#camRow,#result{scroll-margin-top:8px}   /* 自動スクロールで、画面の端にぴったり付かないように */
 [hidden]{display:none!important}   /* hidden属性を、他のdisplay指定より優先する（.opts等が隠れなかった） */
 body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 "Yu Gothic UI","Meiryo",system-ui,sans-serif}
 .wrap{max-width:1080px;margin:0 auto;padding:16px}
@@ -163,7 +164,7 @@ textarea.lsarea{min-height:96px;resize:vertical;font-size:15px}
       <input id="scanInput" type="text" placeholder="タグを手入力" autocapitalize="characters" spellcheck="false">
       <button class="primary" type="submit">確定</button>
     </form>
-    <div class="row"><button type="button" class="primary" id="camBtn">📷 カメラで読み取る</button><button type="button" id="ocrBtn">🔤 文字で読み取る（写真）</button><input type="file" id="ocrFile" accept="image/*" capture="environment" hidden><span class="muted" id="camMsg"></span></div>
+    <div class="row" id="camRow"><button type="button" class="primary" id="camBtn">📷 カメラで読み取る</button><button type="button" id="ocrBtn">🔤 文字で読み取る（写真）</button><input type="file" id="ocrFile" accept="image/*" capture="environment" hidden><span class="muted" id="camMsg"></span></div>
     <div class="camwrap" id="camWrap" hidden>
       <video id="camVideo" playsinline muted autoplay></video>
       <div class="guide"></div>
@@ -452,8 +453,8 @@ function onCamText(text){
   const r=extractTag(text);
   if(r.err){ beep(false); camStat(r.err); showResult("warn",`<h3>読み取れましたが使えません</h3><div>${esc(r.err)}</div>`); return; }
   camStat("読み取り："+r.tag);
+  if(mode==="lookup") stopCam();       // 照会・登録は1件ごとに停止（入力に集中できるように）。先に畳んでから結果を出す
   handleScan(r.tag);
-  if(mode==="lookup") stopCam();       // 照会・登録は1件ごとに停止（入力に集中できるように）
 }
 async function startCam(){
   if(camOn) return;
@@ -467,6 +468,7 @@ async function startCam(){
   camReader=new ZXing.BrowserMultiFormatReader(hints,250);
   camOn=true; lastCam={text:"",t:0};
   $("camWrap").hidden=false; $("camBtn").textContent="■ カメラを止める"; camMsg(""); camStat("カメラを起動中…");
+  requestAnimationFrame(alignCamera);   // 「止める」ボタンとカメラ映像が見える位置へ
   try{
     await camReader.decodeFromConstraints({video:{facingMode:{ideal:"environment"},width:{ideal:1280},height:{ideal:720}}},"camVideo",(res)=>{ if(res) onCamText(res.getText()); });
     camStat("バーコードを枠の中に入れてください");
@@ -483,6 +485,7 @@ function stopCam(keepMsg){
   if(!keepMsg) camMsg("");
 }
 $("camBtn").addEventListener("click",()=>{ camOn?stopCam():startCam(); });
+$("camVideo").addEventListener("loadedmetadata",()=>{ if(camOn) requestAnimationFrame(()=>{ const r=$("result").getBoundingClientRect(), row=$("camRow").getBoundingClientRect(), vh=(window.visualViewport?window.visualViewport.height:window.innerHeight); if(!$("result").firstElementChild || r.bottom-row.top<=vh-16) alignCamera(); }); });   // 映像の大きさが決まると、下の内容がずれるため
 document.addEventListener("visibilitychange",()=>{ if(document.hidden && camOn) stopCam(); });
 
 /* ---------- モード ---------- */
@@ -595,7 +598,24 @@ function handleScan(tag){
   else { beep(false); showUnknown(tag,false,hint); }
 }
 
-function showResult(kind,html){ $("result").innerHTML=`<div class="result ${kind}">${html}</div>`; }
+function showResult(kind,html){ $("result").innerHTML=`<div class="result ${kind}">${html}</div>`; revealResult(); }
+/* 結果の表示後、操作しやすい位置へ画面を動かす。すでに全体が見えていれば動かさない。
+   ・カメラが動いている間：「カメラの行を画面の上端」に合わせる（映像と、その下の結果が、両方見える）。両方が入らないほど背の高い結果は、結果を優先
+   ・カメラが止まっているとき：登録フォームなど背の高いものは、上端が見える位置へ。小さい結果は、最小限の移動で見える位置へ
+   移動は、途中の動き（smooth）が次の移動と競合しないよう、一気に動かす */
+function alignCamera(){ $("camRow").scrollIntoView({behavior:"auto",block:"start"}); }
+function revealResult(){
+  requestAnimationFrame(()=>{
+    const el=$("result"); if(!el.firstElementChild) return;
+    const r=el.getBoundingClientRect(), vh=(window.visualViewport?window.visualViewport.height:window.innerHeight);
+    if(camOn){
+      const row=$("camRow").getBoundingClientRect();
+      if(r.bottom-row.top<=vh-16){ if(Math.abs(row.top-8)>2) alignCamera(); return; }
+    }
+    if(r.top>=0 && r.bottom<=vh) return;
+    el.scrollIntoView({behavior:"auto",block:(r.height>vh*0.55)?"start":"nearest"});
+  });
+}
 
 function showItem(it){
   const btns = STATUS.filter(s=>s!==it.status).map(s=>`<button data-act="status" data-tag="${esc(it.tag)}" data-st="${s}">${s}にする</button>`).join("");
@@ -1355,7 +1375,7 @@ $("ocrFile").addEventListener("change",e=>{ const f=e.target.files[0]; e.target.
    iPhoneのホーム画面アプリは、公開した新しい版を取り込まず、古いページを使い続けることがある（保存期間は10分）。
    起動時とアプリに戻ったときに version.json を確認し、版が違えば、URLに「?v=版番号」を付けて開き直す。
    データ（端末内の保存）は、URLが変わっても消えない。BUILD は公開時に書き換える（開発中は "dev" で、確認しない） */
-const BUILD="20261014-191850";
+const BUILD="20261015-105116";
 let updCheckedAt=0;
 async function checkUpdate(force){
   try{
