@@ -118,6 +118,8 @@ dialog::backdrop{background:rgba(0,0,0,.4)}
 .syncbar.err{color:var(--ng)}
 .syncbox{border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:12px}
 .syncbox h3{margin:0 0 6px;font-size:15px}
+.opts .seg{display:flex;gap:16px;flex-wrap:wrap;padding:6px 0}
+.opts .seg label{flex:0 0 auto;min-width:0;flex-direction:row;align-items:center;gap:4px;font-size:15px;color:var(--text);cursor:pointer}
 .logitem{padding:9px 2px;border-bottom:1px solid var(--line)}
 .logitem:last-child{border-bottom:none}
 .loghead{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
@@ -152,6 +154,7 @@ textarea.lsarea{min-height:96px;resize:vertical;font-size:15px}
     <div class="modes" id="modes">
       <label><input type="radio" name="mode" value="lookup" checked>照会・登録</label>
       <label><input type="radio" name="mode" value="bulk">まとめて入荷</label>
+      <label><input type="radio" name="mode" value="move">出庫・入庫</label>
       <label><input type="radio" name="mode" value="stocktake">棚卸</label>
     </div>
     <div class="opts" id="bulkOpts" hidden>
@@ -160,6 +163,12 @@ textarea.lsarea{min-height:96px;resize:vertical;font-size:15px}
       <label>保管場所<span class="pickbox" id="bulkLocBox" data-list="loc" data-ph="例：倉庫A"></span></label>
       <label>棚番<span class="pickbox" id="bulkShelfBox" data-list="shelf" data-ph="例：A-3"></span></label>
       <label>メモ（全台に付けます）<span class="pickbox" id="bulkMemoBox" data-list="memo" data-ph="例：新品"></span></label>
+    </div>
+    <div class="opts" id="moveOpts" hidden>
+      <label>種類<span class="seg"><label><input type="radio" name="mvk" value="出庫" checked>出庫（引き渡す）</label><label><input type="radio" name="mvk" value="入庫">入庫（受け取る）</label></span></label>
+      <label>移動先の保管場所（必須）<span class="pickbox" id="moveLocBox" data-list="loc" data-ph="例：8F"></span></label>
+      <label>移動先の棚番（空なら変えない）<span class="pickbox" id="moveShelfBox" data-list="shelf" data-ph="変えない"></span></label>
+      <label>状態<select id="moveStatus"></select></label>
     </div>
     <form class="scanrow" id="scanForm" autocomplete="off">
       <input id="scanInput" type="text" placeholder="タグを手入力" autocapitalize="characters" spellcheck="false">
@@ -417,7 +426,7 @@ function offerAddToList(listKey,value){
   }else addDeclined.add(k);
 }
 function remountBulkPicks(){   // 一括入荷の欄：入力中の値を保ったまま、候補だけ更新
-  ["bulkModelBox","bulkLocBox","bulkShelfBox","bulkMemoBox"].forEach(id=>{ const box=$(id); if(!box) return; if(box.querySelector(".pk-in")){ /* 候補は開くたびに作り直すので、再描画は不要 */ } else mountPick(id,""); });
+  ["bulkModelBox","bulkLocBox","bulkShelfBox","bulkMemoBox","moveLocBox","moveShelfBox"].forEach(id=>{ const box=$(id); if(!box) return; if(box.querySelector(".pk-in")){ /* 候補は開くたびに作り直すので、再描画は不要 */ } else mountPick(id,""); });
 }
 
 function tagHint(tag){
@@ -495,16 +504,18 @@ let mode="lookup";
 const HINTS = {
   lookup:"登録済みのタグなら情報と状態変更ボタンを表示、未登録なら登録フォームを表示します。",
   bulk:"同じ機種が複数届いたとき用。機種を入れておけば、読み取るだけで次々に「在庫」として登録します。",
+  move:"読み取った機器の保管場所（棚番・状態も選べます）を、まとめて変えます。8Fなどへ引き渡すときは「出庫」、受け取るときは「入庫」。台帳にない機器は変えません。間違えたら、結果の「取り消す」で戻せます。",
   stocktake:"棚卸中は読み取ったタグを「確認済み」にします。台帳にないタグは警告します。「棚卸」タブで未確認の一覧が見られます。"
 };
 function setMode(m){
   flushBulkMemo();
   mode=m;
   $("bulkOpts").hidden = m!=="bulk";
+  $("moveOpts").hidden = m!=="move"; moveDone=new Set(); lastMove=null;
   $("modeHint").textContent = HINTS[m];
   $("result").innerHTML="";
   if(m==="stocktake" && !S.stocktakeStart){ startStocktake(false); }
-  (m==="bulk" && !pickVal("bulkModelBox") ? $("bulkModelBox").querySelector(".pk-in") : $("scanInput")).focus();
+  (m==="bulk" && !pickVal("bulkModelBox") ? $("bulkModelBox").querySelector(".pk-in") : (m==="move" && !pickVal("moveLocBox") ? $("moveLocBox").querySelector(".pk-in") : $("scanInput"))).focus();
 }
 $("modes").addEventListener("change",e=>{ if(e.target.name==="mode") setMode(e.target.value); });
 
@@ -548,6 +559,7 @@ $("scanInput").addEventListener("input",e=>{
 
 /* まとめて入荷：直前に登録した1台に、個別のメモを付ける（共通メモの後ろに「／」でつなぐ） */
 let bulkLast=null;
+let moveDone=new Set(), lastMove=null;   // 出庫・入庫：この画面で移動した台・直前の1台（取り消し用）
 function applyBulkMemo(v){
   if(!bulkLast) return null;
   const it=find(bulkLast.tag); if(!it) return null;
@@ -576,6 +588,24 @@ function handleScan(tag){
       beep(false);
       showUnknown(tag,true,hint);
     }
+    return;
+  }
+  if(mode==="move"){   // 出庫・入庫：保管場所（と棚番・状態）を変える
+    const kind=(document.querySelector('input[name=mvk]:checked')||{}).value||"出庫";
+    const toLoc=pickVal("moveLocBox"), toShelf=pickVal("moveShelfBox"), toSt=$("moveStatus").value;
+    if(!toLoc){ beep(false); showResult("ng","<h3>移動先が未入力です</h3><div>上の「移動先の保管場所」を選ぶか入力してから、読み取ってください。</div>"); $("moveLocBox").querySelector(".pk-in").focus(); return; }
+    if(!it){ beep(false); showResult("ng",`<h3>台帳にない機器です</h3><div class="tagbig">${esc(tag)}</div><div>出庫・入庫できるのは、登録済みの機器だけです。先に「照会・登録」で登録してください。</div>`); return; }
+    const prev={loc:it.loc||"",shelf:it.shelf||"",status:it.status};
+    const parts=[];
+    if(prev.loc!==toLoc) parts.push(`${prev.loc||"（場所なし）"} → ${toLoc}`);
+    if(toShelf && prev.shelf!==toShelf) parts.push(`棚番 ${prev.shelf||"なし"} → ${toShelf}`);
+    if(toSt && prev.status!==toSt) parts.push(`状態 ${prev.status} → ${toSt}`);
+    if(!parts.length){ beep(false); showResult("warn",`<h3>すでに移動先にあります</h3><div class="tagbig">${esc(tag)}</div><div>${esc(it.model)} ／ ${esc(it.loc||"")}${it.shelf?` ／ 棚番：${esc(it.shelf)}`:""} ／ ${badge(it.status)}</div>`); return; }
+    it.loc=toLoc; if(toShelf) it.shelf=toShelf; if(toSt) it.status=toSt; it.updated=nowIso();
+    addLog(tag,kind,parts.join(" / ")); save(); renderAll(); beep(true);
+    moveDone.add(tag); lastMove={tag,prev,kind,toLoc};
+    showResult("ok",`<h3>${kind}しました</h3><div class="tagbig">${esc(tag)}</div><div>${esc(it.model)} ／ ${esc(parts.join(" ／ "))}</div><div class="muted">この画面で${kind}した台数：${moveDone.size} 台</div><div class="row"><button data-act="moveUndo" data-tag="${esc(tag)}">↩ 取り消す</button></div>`);
+    offerAddToList("loc",toLoc); if(toShelf) offerAddToList("shelf",toShelf);
     return;
   }
   if(mode==="bulk"){
@@ -683,6 +713,15 @@ $("result").addEventListener("click",e=>{
     if(it) showResult("ok",`<h3>メモを付けました</h3><div class="tagbig">${esc(it.tag)}</div><div>${esc(it.model)} ／ メモ：${esc(it.memo)}</div>`);
     bulkLast=null; $("scanInput").focus();
   }
+  if(act==="moveUndo"){   // 直前の出庫・入庫を取り消す（元の場所・棚番・状態に戻す）
+    const it=find(b.dataset.tag);
+    if(!it||!lastMove||lastMove.tag!==b.dataset.tag){ showResult("warn","<h3>取り消せません</h3><div>取り消せるのは、直前の1台だけです。台帳の「編集」から直してください。</div>"); return; }
+    const pv=lastMove.prev; it.loc=pv.loc; it.shelf=pv.shelf; it.status=pv.status; it.updated=nowIso();
+    addLog(it.tag,"取り消し",`${lastMove.kind}を取り消し（${lastMove.toLoc} → ${pv.loc||"（場所なし）"}）`); moveDone.delete(it.tag); lastMove=null;
+    save(); renderAll();
+    showResult("warn",`<h3>取り消しました</h3><div class="tagbig">${esc(it.tag)}</div><div>${esc(it.model)} ／ ${esc(it.loc||"（場所なし）")}${it.shelf?` ／ 棚番：${esc(it.shelf)}`:""} ／ ${badge(it.status)}</div>`);
+    $("scanInput").focus();
+  }
   if(act==="pickTag"){ $("result").innerHTML=""; handleScan(b.dataset.tag); }
   if(act==="ocrGo") ocrSelGo(false);
   if(act==="ocrAll") ocrSelGo(true);
@@ -705,6 +744,7 @@ function changeStatus(tag,st){
 let editingTag=null;
 $("editStatus").innerHTML=STATUS.map(s=>`<option>${s}</option>`).join("");
 $("bulkStatus").innerHTML=STATUS.map(s=>`<option>${s}</option>`).join("");   // 初期値は先頭の「在庫」
+$("moveStatus").innerHTML=`<option value="">変えない</option>`+STATUS.map(s=>`<option>${s}</option>`).join("");
 function openEdit(tag){
   const it=find(tag); if(!it) return;
   editingTag=tag;
@@ -891,7 +931,7 @@ function renderData(){
       </div>
       <div class="toolbar" style="margin-top:8px">
         <button id="syConnect" class="primary">接続テストして保存</button>
-        <button id="syPush">今すぐ送信</button>
+        <button id="syPush">今すぐ同期</button>
         <button id="syRestore">スプレッドシートから復元</button>
         <button id="syOff" class="danger">連携を解除</button>
       </div>
@@ -965,6 +1005,13 @@ $("tab-data").addEventListener("click",async e=>{
     if(syncOn()){ alert("クラウド保存の連携中は使えません（サンプルが本物のデータを上書きするのを防ぐため）。先に「連携を解除」してください。"); return; }
     if(confirm("現在のデータを破棄して、サンプルデータに戻します。よろしいですか？（プルダウンの項目は残ります）")){ const keep=S.lists; S=sampleData(); S.lists=keep; save(); renderAll(); $("result").innerHTML=""; }
   }
+  if(id==="clearAll" && syncOn() && v3()){   // 版3：クラウドが正本なので、クラウドの台帳からも削除する
+    if(confirm("すべての機器を削除します。クラウド（スプレッドシート）の台帳からも削除されます（「日次バックアップ」シートに、その日の最初の書き込み前の状態が残ります）。元に戻せません。よろしいですか？")){
+      S={items:[],log:S.log,minStock:S.minStock,stocktakeStart:null,lists:S.lists,base:S.base}; addLog("-","すべて削除",""); save(); clearTimeout(syTimer); renderAll(); $("result").innerHTML="";
+      pushNow(true,true);
+    }
+    return;
+  }
   if(id==="clearAll"){
     if(confirm("すべての機器と履歴を削除します。元に戻せません。よろしいですか？")){
       S={items:[],log:[],minStock:{},stocktakeStart:null,lists:S.lists}; save(); renderAll(); $("result").innerHTML="";
@@ -1013,6 +1060,7 @@ $("tabs").addEventListener("click",e=>{ const b=e.target.closest("button[data-ta
 const SY_URL_RE=/^https:\/\/script\.google\.com\/(a\/macros\/[^/]+\/|macros\/)s\/[A-Za-z0-9_-]+\/exec$/;
 const SY_ERR={
   bad_key:"合言葉が違います。Apps Script側の KEY と同じにしてください。",
+  read_only:"この合言葉では、在庫管理アプリから保存できません。アプリには、すべてができる合言葉（KEY）を入れてください。",
   key_not_set:"Apps Script側の KEY が初期値のままです（12文字以上に書き換えて、新しいバージョンでデプロイし直してください）。",
   empty_overwrite:"台帳が空のデータで上書きされるのを、サーバー側で止めました。",
   bad_request:"送った内容をサーバーが理解できませんでした。",
@@ -1050,10 +1098,64 @@ function syncPayload(){
 }
 const syErrText=(j)=>SY_ERR[j.error]||("送信できませんでした："+(j.message||j.error));
 
+/* ---------- 差分の同期（スプレッドシート側のコードが版3以上のとき） ----------
+   前回の同期で受け取った台帳を「基準」（S.base）として覚え、基準から変わった項目だけを送る。
+   スプレッドシートは、複数の端末（このアプリ・閲覧画面・8Fなど）の変更をまとめた最新の台帳を返すので、それに置き換える。
+   同じ機器の別々の項目を別の端末で変えても、両方残る。通信中にこの端末で変えた分は、受け取った台帳に重ねて、次の同期で送る */
+const v3=()=>(SY.ver||1)>=3;
+const pickF=(i)=>({model:i.model||"",status:i.status||"",loc:i.loc||"",shelf:i.shelf||"",memo:i.memo||"",checked:i.checked||""});
+function baseOf(items){ const m={}; items.forEach(i=>{ m[i.tag]=pickF(i); }); return m; }
+function diffItems(base,items){
+  const patches=[], seen=new Set();
+  items.forEach(i=>{
+    seen.add(i.tag);
+    const cur=pickF(i), b=base[i.tag];
+    const at=[i.updated||"",i.checked||""].sort().pop()||nowIso();
+    if(!b){ patches.push({tag:i.tag,create:true,fields:cur,at}); return; }
+    const f={}; let n=0;
+    Object.keys(cur).forEach(k=>{ if(cur[k]!==(b[k]||"")){ f[k]=cur[k]; n++; } });
+    if(n) patches.push({tag:i.tag,fields:f,at});
+  });
+  return {patches,deletes:Object.keys(base).filter(t=>!seen.has(t))};
+}
+function applyDiff(items,d){
+  const del=new Set(d.deletes), out=items.filter(i=>!del.has(i.tag)).map(i=>Object.assign({},i));   // 複製してから重ねる（元の配列＝基準を書き換えない）
+  d.patches.forEach(p=>{
+    let it=out.find(i=>i.tag===p.tag);
+    if(!it){ if(!p.create) return; it={tag:p.tag,model:"",status:"在庫",loc:"",shelf:"",memo:"",updated:p.at,checked:null}; out.push(it); }
+    Object.assign(it,p.fields); if(!it.checked) it.checked=null; if(p.at>(it.updated||"")) it.updated=p.at;
+  });
+  return out;
+}
+function cleanList(arr){ const seen=new Set(), out=[]; (Array.isArray(arr)?arr:[]).forEach(x=>{ const it=cleanItem(x); if(it&&!seen.has(it.tag)){ seen.add(it.tag); out.push(it); } }); return out; }
+function mergeLogs(a,b){
+  const seen=new Set(), out=[];
+  a.concat(b).forEach(l=>{ if(!l||!l.t) return; const k=[l.t,l.tag,l.act,l.note].join("|"); if(seen.has(k)) return; seen.add(k); out.push({t:String(l.t),tag:String(l.tag||""),act:String(l.act||""),note:String(l.note||"")}); });
+  out.sort((x,y)=>x.t<y.t?1:(x.t>y.t?-1:0)); return out.slice(0,500);
+}
+function persistLocal(){ try{ localStorage.setItem(KEY, JSON.stringify(S)); }catch(e){} }   // 同期の結果の保存（送信の予約はしない）
+async function syncV3(force){
+  if(!S.base){   // 版3で初めて同期する：クラウドにあって、この端末にもある機器だけを基準にする（クラウドにしか無い機器を、消してしまわないため）
+    const p=await api("pull"); if(!p.ok) return p;
+    const local=new Set(S.items.map(i=>i.tag)); S.base=baseOf(cleanList(p.items).filter(i=>local.has(i.tag))); persistLocal();
+  }
+  const sent=JSON.parse(JSON.stringify(S.items)), d=diffItems(S.base,sent);
+  const j=await api("sync",{data:{patches:d.patches,deletes:d.deletes,force:!!force,log:S.log.slice(0,200),
+    settings:{minStock:S.minStock||{},lists:S.lists,stocktakeStart:S.stocktakeStart||""}}});
+  if(!j.ok) return j;
+  const before=JSON.stringify([S.items,S.log]);
+  const server=cleanList(j.items), during=diffItems(baseOf(sent),S.items);
+  S.base=baseOf(server); S.items=applyDiff(server,during);   // 基準は、重ねる前の、スプレッドシートの台帳
+  if(Array.isArray(j.log)) S.log=mergeLogs(S.log,j.log);
+  persistLocal();
+  if(during.patches.length||during.deletes.length) SY.dirty=true;   // 通信中に変えた分は、次の同期で送る
+  return Object.assign({},j,{changed:before!==JSON.stringify([S.items,S.log])});
+}
+
 async function pushNow(manual,force){
   if(!syncOn()||syBusy) return;
   if(sampleLeft()){ SY.lastErr="サンプルデータが残っているので送信を止めています。「スプレッドシートから復元」か「すべて空にする」をしてください。"; sySave(); renderSync(); return; }
-  if(!S.items.length && !force){ SY.lastErr="台帳が空のため送信を止めています（誤って上書きしないため）。"; sySave(); renderSync(); return; }
+  if(!S.items.length && !force && !(v3() && S.base && !Object.keys(S.base).length)){ SY.lastErr="台帳が空のため送信を止めています（誤って上書きしないため）。"; sySave(); renderSync(); return; }
   if(!SY.lastOk && !manual){ SY.lastErr="最初の1回は、データ画面の「今すぐ送信」か「復元」を押してください（クラウドの既存データを誤って上書きしないため）。"; sySave(); renderSync(); return; }
   if(!navigator.onLine){ renderSync(); return; }
   syBusy=true; SY.dirty=false; renderSync();
@@ -1061,13 +1163,22 @@ async function pushNow(manual,force){
     if(manual && !SY.lastOk && !force){   // 最初の送信：クラウドに既存データがあれば確認する
       const p=await api("ping");
       if(!p.ok) throw Object.assign(new Error("api"),{j:p});
-      if(p.rows>0 && !confirm(`スプレッドシートには、すでに ${p.rows} 台のデータがあります。\nこの端末の ${S.items.length} 台で置き換えますか？\n（置き換えたくない場合は「キャンセル」して「復元」を使ってください）`)){
+      SY.ver=p.ver||1;
+      const q=v3()?`スプレッドシートには、すでに ${p.rows} 台のデータがあります。\nこの端末の ${S.items.length} 台と合わせますか？（同じ機器で内容が違う項目は、この端末の内容になります）\n（スプレッドシートの内容だけにしたい場合は「キャンセル」して「復元」を使ってください）`
+        :`スプレッドシートには、すでに ${p.rows} 台のデータがあります。\nこの端末の ${S.items.length} 台で置き換えますか？\n（置き換えたくない場合は「キャンセル」して「復元」を使ってください）`;
+      if(p.rows>0 && !confirm(q)){
         SY.dirty=true; SY.lastErr="最初の送信を取りやめました。"; syBusy=false; sySave(); renderSync(); return;
       }
     }
-    const j=await api("push",{force:!!force,data:syncPayload()});
-    if(j.ok){ SY.lastOk=nowIso(); SY.lastErr=""; SY.ver=j.ver||1; }
-    else{ SY.dirty=true; SY.lastErr=syErrText(j); }
+    if(v3()){
+      const j=await syncV3(force);
+      if(j.ok){ SY.lastOk=nowIso(); SY.lastErr=""; SY.ver=j.ver||SY.ver; if(j.changed) renderAll(); }
+      else{ SY.dirty=true; SY.lastErr=syErrText(j); }
+    }else{
+      const j=await api("push",{force:!!force,data:syncPayload()});
+      if(j.ok){ SY.lastOk=nowIso(); SY.lastErr=""; SY.ver=j.ver||1; if(v3()){ S.base=baseOf(S.items); persistLocal(); } }   // 版3のコードに丸ごと送った直後は、この端末の台帳が基準
+      else{ SY.dirty=true; SY.lastErr=syErrText(j); }
+    }
   }catch(e){ SY.dirty=true; SY.lastErr=e&&e.j?syErrText(e.j):netErr(e); }
   syBusy=false; sySave(); renderSync();
   if(SY.dirty && !SY.lastErr){ clearTimeout(syTimer); syTimer=setTimeout(()=>pushNow(),1000); }   // 送信中に変更があった分
@@ -1099,7 +1210,7 @@ async function restoreNow(){
   const log=(Array.isArray(j.log)?j.log:[]).slice(0,200).map(l=>({t:String(l.t||""),tag:String(l.tag||""),act:String(l.act||""),note:String(l.note||"")}));
   let minStock={}; if(j.minStock&&typeof j.minStock==="object") Object.keys(j.minStock).forEach(k=>{ const n=parseInt(j.minStock[k],10); if(n>0) minStock[k]=n; });
   // 古いApps Scriptは lists を返さない → その場合はこの端末の項目を残す
-  S={items,log,minStock,stocktakeStart:j.stocktakeStart||null,lastBackup:S.lastBackup,lists:(j.lists&&typeof j.lists==="object")?normLists(j.lists):S.lists};
+  S={items,log,minStock,base:baseOf(items),stocktakeStart:j.stocktakeStart||null,lastBackup:S.lastBackup,lists:(j.lists&&typeof j.lists==="object")?normLists(j.lists):S.lists};
   save(); clearTimeout(syTimer);
   SY.dirty=false; SY.lastOk=nowIso(); SY.lastErr=""; sySave();
   renderAll(); $("result").innerHTML="";
@@ -1111,7 +1222,7 @@ function syncState(){
   if(syBusy) return {cls:"",t:"☁ 通信中…"};
   if(SY.lastErr) return {cls:"err",t:"☁ 保存できていません：タップして確認"};
   if(SY.dirty) return {cls:"",t:"☁ 送信待ち"+(navigator.onLine?"":"（オフライン）")};
-  return {cls:"ok",t:"☁ 保存済み "+fmt(SY.lastOk)};
+  return {cls:"ok",t:(v3()?"☁ 同期済み ":"☁ 保存済み ")+fmt(SY.lastOk)};
 }
 function renderSync(){
   const s=syncState(), bar=$("syncBar");
@@ -1122,7 +1233,7 @@ function renderSync(){
 }
 $("syncBar").addEventListener("click",()=>showTab("data"));
 window.addEventListener("online",()=>{ if(SY.dirty) pushNow(); });
-document.addEventListener("visibilitychange",()=>{ if(!document.hidden && SY.dirty) pushNow(); });
+document.addEventListener("visibilitychange",()=>{ if(!document.hidden && (SY.dirty || (syncOn() && v3() && SY.lastOk && Date.now()-new Date(SY.lastOk).getTime()>30000))) pushNow(); });
 
 $("tab-data").addEventListener("click",async e=>{
   const id=e.target.id; if(!id||id.slice(0,2)!=="sy") return;
@@ -1136,6 +1247,7 @@ $("tab-data").addEventListener("click",async e=>{
     try{
       const p=await api("ping",{}, {url,key});
       if(!p.ok){ msg(syErrText(p)); return; }
+      if(p.role && p.role!=="owner"){ msg(p.role==="editor"?"これは編集用の合言葉（EDIT_KEY）です。在庫管理アプリには、すべてができる合言葉（KEY）を入れてください（EDIT_KEY は閲覧用ページで使います）。":"これは閲覧専用の合言葉（VIEW_KEY）です。在庫管理アプリには、すべてができる合言葉（KEY）を入れてください。"); return; }
       const changed=(url!==SY.url||key!==SY.key);
       SY.url=url; SY.key=key; SY.ver=p.ver||1; if(changed){ SY.lastOk=null; SY.dirty=false; } SY.lastErr=""; sySave(); renderSync();
       msg(`接続できました（スプレッドシート「${p.sheet}」・台帳 ${p.rows} 台）。`+(p.rows>0&&(sampleLeft()||!S.items.length)?" 既にデータがあります。「スプレッドシートから復元」を押してください。":" 次に「今すぐ送信」を押すと、この端末のデータを送ります。"));
@@ -1387,7 +1499,7 @@ $("ocrFile").addEventListener("change",e=>{ const f=e.target.files[0]; e.target.
    iPhoneのホーム画面アプリは、公開した新しい版を取り込まず、古いページを使い続けることがある（保存期間は10分）。
    起動時とアプリに戻ったときに version.json を確認し、版が違えば、URLに「?v=版番号」を付けて開き直す。
    データ（端末内の保存）は、URLが変わっても消えない。BUILD は公開時に書き換える（開発中は "dev" で、確認しない） */
-const BUILD="20261015-112920";
+const BUILD="20261016-151543";
 let updCheckedAt=0;
 async function checkUpdate(force){
   try{
@@ -1414,7 +1526,8 @@ document.addEventListener("visibilitychange",()=>{ if(!document.hidden) checkUpd
 /* ---------- 起動 ---------- */
 renderAll();
 setMode("lookup");
-if(SY.dirty) pushNow();   // 前回送れなかった分があれば、開いたときに再送
+if(SY.dirty || (syncOn() && v3() && SY.lastOk)) pushNow();   // 前回送れなかった分の再送。版3では、ほかの端末（閲覧画面・8F）の変更も取り込む
+setInterval(()=>{ if(!document.hidden && syncOn() && v3() && SY.lastOk && !syBusy && Date.now()-new Date(SY.lastOk).getTime()>120000) pushNow(); },30000);   // 開いている間は2分ごと
 checkUpdate(true);
 </script>
 </body>

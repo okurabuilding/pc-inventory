@@ -79,6 +79,20 @@ dialog::backdrop{background:rgba(0,0,0,.4)}
 .setup{max-width:520px;margin:30px auto}
 .setup label{display:block;font-size:13px;color:var(--sub);margin:10px 0 3px}
 .foot{margin:18px 0;text-align:center}
+/* 編集・出庫・入庫（書き込みできる合言葉のとき） */
+.selbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--accent-bg);border-radius:8px;padding:6px 10px;margin-bottom:8px}
+.selbox{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
+.selbox input{width:18px;height:18px;margin:0}
+.lrow.sel{background:var(--accent-bg)}
+.c-upd button{margin-left:6px}
+.formgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+.formgrid>label{display:flex;flex-direction:column;gap:2px;font-size:12px;color:var(--sub)}
+.formgrid .full{grid-column:1/-1}
+.seg{display:flex;gap:16px;padding:6px 0}
+.seg label{display:flex;align-items:center;gap:4px;font-size:15px;color:var(--text);cursor:pointer}
+.dlgbtns{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+.banner.ok{background:var(--ok-bg);color:var(--ok)}
+@media(max-width:560px){ .formgrid{grid-template-columns:1fr} }
 /* ---------- スマホ（狭い画面） ---------- */
 @media(max-width:820px){
   .wrap{padding:10px}
@@ -111,16 +125,16 @@ dialog::backdrop{background:rgba(0,0,0,.4)}
 <body>
 <div class="wrap">
   <div class="top">
-    <h1>PC在庫 <span class="muted">閲覧用（読み取り専用）</span></h1>
+    <h1>PC在庫 <span class="muted" id="modeLabel">閲覧用</span></h1>
     <span class="sp"></span>
-    <a href="./" class="muted" style="text-decoration:underline">← 在庫管理（登録・編集）へ</a>
+    <a href="./" class="muted" style="text-decoration:underline">← 在庫管理アプリ（登録・読み取り）へ</a>
     <span class="muted" id="meta"></span>
   </div>
 
   <!-- 接続の設定 -->
   <div class="card setup" id="setup" hidden>
     <h2 style="margin:0 0 4px;font-size:17px">はじめに：接続先を設定します</h2>
-    <div class="muted">在庫管理アプリの「データ」タブに入れている、Apps Script の「ウェブアプリのURL」と、<b>閲覧用の合言葉</b>を入れます。この端末のブラウザの中にだけ保存されます。共有リンクをもらった場合は、リンクを開くだけで設定されます。</div>
+    <div class="muted">在庫管理アプリの「データ」タブに入れている、Apps Script の「ウェブアプリのURL」と、<b>合言葉</b>（閲覧用、または編集用）を入れます。編集用の合言葉なら、このページで編集・出庫・入庫ができます。この端末のブラウザの中にだけ保存されます。共有リンクをもらった場合は、リンクを開くだけで設定されます。</div>
     <label for="sUrl">接続先URL</label>
     <input type="text" id="sUrl" placeholder="https://script.google.com/macros/s/…/exec" autocapitalize="off" autocomplete="off" spellcheck="false">
     <label for="sKey">合言葉（12文字以上）</label>
@@ -147,18 +161,19 @@ dialog::backdrop{background:rgba(0,0,0,.4)}
           <input type="search" id="fq" placeholder="サービスタグ・機種・場所・棚番・メモで検索">
           <select id="fst"></select><select id="fmodel"></select><select id="floc"></select>
         </div>
+        <div id="selbar" class="selbar" hidden></div>
         <div class="muted" id="fcount" style="margin-bottom:4px"></div>
         <div id="listbox"></div>
       </div>
     </div>
-    <div class="muted foot">このページは閲覧専用です。登録・編集は、在庫管理アプリで行います。</div>
+    <div class="muted foot" id="foot">このページは閲覧専用です。登録・編集は、在庫管理アプリで行います。</div>
   </div>
 </div>
 
 <dialog id="shareDlg">
   <h3 style="margin:0 0 6px;font-size:16px">🔗 共有リンク</h3>
   <div id="shareWarn" class="banner" hidden></div>
-  <div class="muted">このリンクを開くと、接続先と合言葉が、相手の端末に設定されます。<b>リンクを知っている人は、台帳を読めます。</b>人に渡すときは、書き込みもできる合言葉（KEY）ではなく、<b>閲覧専用の合言葉（VIEW_KEY）</b>のリンクにしてください。</div>
+  <div class="muted">このリンクを開くと、接続先と合言葉が、相手の端末に設定されます。<b>リンクを知っている人は、台帳を読めます。</b>人に渡すときは、すべてができる合言葉（KEY）ではなく、<b>閲覧専用（VIEW_KEY）</b>か<b>編集用（EDIT_KEY）</b>の合言葉のリンクにしてください。</div>
   <input type="text" id="shareUrl" readonly style="margin-top:8px">
   <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
     <button id="shareCopy" class="primary">コピー</button><button id="shareClose">閉じる</button>
@@ -166,10 +181,40 @@ dialog::backdrop{background:rgba(0,0,0,.4)}
   <div class="muted" id="shareMsg"></div>
 </dialog>
 
+<dialog id="editDlg">
+  <h3 style="margin:0 0 6px;font-size:16px">✏ 編集：<span class="tag" id="eTag"></span></h3>
+  <div class="formgrid">
+    <label class="full">機種<input type="text" id="eModel" list="dlModel" autocomplete="off"></label>
+    <label>状態<select id="eStatus"></select></label>
+    <label>保管場所／使用者<input type="text" id="eLoc" list="dlLoc" autocomplete="off"></label>
+    <label>棚番<input type="text" id="eShelf" list="dlShelf" autocomplete="off"></label>
+    <label>メモ<input type="text" id="eMemo" list="dlMemo" autocomplete="off"></label>
+    <label class="full">あなたの名前（履歴に残ります・任意）<input type="text" id="eWho" autocomplete="off" placeholder="例：8F 田中"></label>
+  </div>
+  <div class="muted" id="eMsg" style="margin-top:6px"></div>
+  <div class="dlgbtns"><button id="eCancel">キャンセル</button><button class="primary" id="eSave">保存</button></div>
+</dialog>
+
+<dialog id="moveDlg">
+  <h3 style="margin:0 0 6px;font-size:16px">🚚 出庫・入庫（保管場所の変更）：<span id="mCount"></span> 台</h3>
+  <div class="muted" id="mList" style="word-break:break-all"></div>
+  <div class="formgrid">
+    <label class="full">種類<span class="seg"><label><input type="radio" name="mKind" value="出庫" checked>出庫（引き渡す）</label><label><input type="radio" name="mKind" value="入庫">入庫（受け取る）</label></span></label>
+    <label>移動先の保管場所（必須）<input type="text" id="mLoc" list="dlLoc" autocomplete="off" placeholder="例：8F"></label>
+    <label>移動先の棚番（空なら変えない）<input type="text" id="mShelf" list="dlShelf" autocomplete="off"></label>
+    <label>状態<select id="mStatus"></select></label>
+    <label>あなたの名前（履歴に残ります・任意）<input type="text" id="mWho" autocomplete="off" placeholder="例：8F 田中"></label>
+  </div>
+  <div class="muted" id="mMsg" style="margin-top:6px"></div>
+  <div class="dlgbtns"><button id="mCancel">キャンセル</button><button class="primary" id="mSave">移動する</button></div>
+</dialog>
+<datalist id="dlModel"></datalist><datalist id="dlLoc"></datalist><datalist id="dlShelf"></datalist><datalist id="dlMemo"></datalist>
+
 <script>
 "use strict";
-/* 閲覧専用ページ。データはページに入れず、スプレッドシート（Apps Script）から読み込む。書き込みはしない */
-const BUILD="20261015-112920";
+/* 閲覧用ページ。データはページに入れず、スプレッドシート（Apps Script）から読み込む。
+   編集用の合言葉（EDIT_KEY）か KEY で接続し、スプレッドシート側のコードが版3以上のときだけ、編集・出庫・入庫ができる（変えた項目だけを送る） */
+const BUILD="20261016-151543";
 const STATUS=["在庫","貸出中","修理中","動作未確認","故障","廃棄"];
 const SCOL={"在庫":"var(--c-stock)","貸出中":"var(--c-loan)","修理中":"var(--c-repair)","動作未確認":"var(--c-unk)","故障":"var(--c-broken)","廃棄":"var(--c-scrap)"};
 const URL_RE=/^https:\/\/script\.google\.com\/(a\/macros\/[^/]+\/|macros\/)s\/[A-Za-z0-9_-]+\/exec$/;
@@ -188,16 +233,16 @@ let DATA=lsGet(CACHE_KEY);                    // {items,minStock,savedAt,fetched
 const view={tab:"models",q:"",st:"",model:"",loc:"",limit:200,err:"",loading:false};
 
 /* ---------- 通信 ---------- */
-async function api(action,creds){
+async function api(action,creds,extra){
   const c=creds||CFG, ctl=new AbortController(), to=setTimeout(()=>ctl.abort(),25000);
   try{
-    const res=await fetch(c.url,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({key:c.key,action}),signal:ctl.signal,redirect:"follow",credentials:"omit",cache:"no-store"});
+    const res=await fetch(c.url,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(Object.assign({key:c.key,action},extra||{})),signal:ctl.signal,redirect:"follow",credentials:"omit",cache:"no-store"});
     const text=await res.text(); let j;
     try{ j=JSON.parse(text); }catch(_){ const e=new Error("not_json"); e.code="not_json"; throw e; }
     return j;
   }finally{ clearTimeout(to); }
 }
-const ERR={bad_key:"合言葉が違います。",key_not_set:"スプレッドシート側の KEY が初期値のままです。",bad_request:"読み込みの要求が正しくありません。",server_error:"スプレッドシート側でエラーが起きました。"};
+const ERR={read_only:"この合言葉では、編集できません（閲覧専用の合言葉です）。",bad_key:"合言葉が違います。",key_not_set:"スプレッドシート側の KEY が初期値のままです。",bad_request:"読み込みの要求が正しくありません。",server_error:"スプレッドシート側でエラーが起きました。"};
 const errText=(j)=>ERR[j.error]||("読み込めませんでした："+(j.message||j.error));
 function netErr(e){
   if(e&&e.code==="not_json") return "応答を読めませんでした。URLの間違い、または Apps Script の公開範囲（アクセスできるユーザー＝全員）を確認してください。";
@@ -213,6 +258,11 @@ function cleanItems(arr){
   });
   return out;
 }
+function buildData(j){
+  return {items:cleanItems(j.items),minStock:(j.minStock&&typeof j.minStock==="object")?j.minStock:{},savedAt:String(j.savedAt||""),fetchedAt:new Date().toISOString(),
+    role:String(j.role||""),ver:Number(j.ver)||1,lists:(j.lists&&typeof j.lists==="object")?j.lists:null};
+}
+const canEdit=()=>!!(DATA&&(DATA.role==="owner"||DATA.role==="editor")&&(DATA.ver||1)>=3);
 async function refresh(){
   if(!CFG.url||view.loading) return;
   view.loading=true; renderBanner();
@@ -220,8 +270,7 @@ async function refresh(){
     const j=await api("pull");
     if(!j.ok){ view.err=errText(j); }
     else{
-      DATA={items:cleanItems(j.items),minStock:(j.minStock&&typeof j.minStock==="object")?j.minStock:{},savedAt:String(j.savedAt||""),fetchedAt:new Date().toISOString()};
-      lsSet(CACHE_KEY,DATA); view.err="";
+      DATA=buildData(j); lsSet(CACHE_KEY,DATA); view.err="";
     }
   }catch(e){ view.err=netErr(e); }
   view.loading=false; renderAll();
@@ -231,8 +280,15 @@ async function refresh(){
 function renderBanner(){
   const b=$("banner");
   if(view.loading) b.innerHTML=`<div class="banner" style="background:var(--accent-bg);color:var(--accent)">最新のデータを読み込んでいます…</div>`;
+  else if(view.ok) b.innerHTML=`<div class="banner ok">${esc(view.ok)}</div>`;
   else if(view.err) b.innerHTML=`<div class="banner err">最新を取得できませんでした：${esc(view.err)}${DATA?`<br>保存してある ${esc(fmt(DATA.fetchedAt))} 時点のデータを表示しています。`:""}</div>`;
+  else if(DATA&&(DATA.role==="owner"||DATA.role==="editor")&&(DATA.ver||1)<3) b.innerHTML=`<div class="banner">この合言葉では編集できる設定ですが、スプレッドシート側のコードが古いため、今は読み取りだけです。編集するには、Apps Script を最新のコード（版3）に更新してください。</div>`;
   else b.innerHTML="";
+}
+function renderRole(){
+  const ed=canEdit();
+  $("modeLabel").textContent=ed?"閲覧・編集用":"閲覧用（読み取り専用）";
+  $("foot").textContent=ed?"このページでは、編集と出庫・入庫ができます（機器の削除・新規登録・設定の変更は、在庫管理アプリで行います）。":"このページは閲覧専用です。登録・編集は、在庫管理アプリで行います。";
 }
 function renderAll(){
   const configured=!!(CFG.url&&CFG.key);
@@ -241,7 +297,7 @@ function renderAll(){
   renderBanner();
   $("meta").textContent=DATA?`最終保存 ${fmt(DATA.savedAt)||"—"} ／ 取得 ${fmt(DATA.fetchedAt)}`:"";
   if(!DATA){ $("stats").innerHTML=""; $("tab-models").innerHTML=`<div class="empty">${view.loading?"読み込み中…":"データがありません。「最新に更新」を押してください。"}</div>`; $("listbox").innerHTML=""; return; }
-  renderStats(); renderModels(); renderFilters(); renderList();
+  renderRole(); renderStats(); renderModels(); renderFilters(); renderList(); fillLists();
 }
 function renderStats(){
   const it=DATA.items, n=(s)=>it.filter(i=>i.status===s).length;
@@ -280,11 +336,109 @@ function filtered(){
 function renderList(){
   const all=filtered(), shown=all.slice(0,view.limit);
   $("fcount").textContent=`${all.length} 件${all.length>shown.length?`（先頭 ${shown.length} 件を表示）`:""}`;
+  renderSelbar();
   if(!all.length){ $("listbox").innerHTML=`<div class="empty">該当する機器はありません。</div>`; return; }
   $("listbox").innerHTML=`<div class="lhead"><span>サービスタグ</span><span>機種</span><span>状態</span><span>場所／使用者</span><span>棚番</span><span>メモ</span><span>更新</span></div>`
-    +shown.map(i=>`<div class="lrow"><span class="c-tag tag">${esc(i.tag)}</span><span class="c-model">${esc(i.model)}</span><span class="c-st">${badge(i.status)}</span><span class="c-loc">${esc(i.loc)}</span><span class="c-shelf">${esc(i.shelf)}</span><span class="c-memo">${esc(i.memo)}</span><span class="c-upd">${esc(fmt(i.updated))}</span></div>`).join("")
+    +shown.map(rowHtml).join("")
     +(all.length>shown.length?`<div class="more"><button id="bMore">さらに ${Math.min(200,all.length-shown.length)} 件を表示</button></div>`:"");
 }
+
+function rowHtml(i){
+  const ed=canEdit(), on=sel.has(i.tag);
+  const tag=ed?`<label class="selbox"><input type="checkbox" data-sel="${esc(i.tag)}"${on?" checked":""}><span class="tag">${esc(i.tag)}</span></label>`:esc(i.tag);
+  return `<div class="lrow${on?" sel":""}"><span class="c-tag tag">${tag}</span><span class="c-model">${esc(i.model)}</span><span class="c-st">${badge(i.status)}</span><span class="c-loc">${esc(i.loc)}</span><span class="c-shelf">${esc(i.shelf)}</span><span class="c-memo">${esc(i.memo)}</span><span class="c-upd">${esc(fmt(i.updated))}${ed?`<button class="sm" data-edit="${esc(i.tag)}">✏ 編集</button>`:""}</span></div>`;
+}
+
+/* ---------- 編集・出庫・入庫（書き込みできる合言葉のとき） ---------- */
+const sel=new Set();   // 選んだ機器のタグ
+function renderSelbar(){
+  const b=$("selbar"); if(!canEdit()){ b.hidden=true; sel.clear(); return; }
+  [...sel].forEach(t=>{ if(!DATA.items.some(i=>i.tag===t)) sel.delete(t); });
+  b.hidden=false;
+  b.innerHTML=`<b>選択中：${sel.size} 台</b><button class="primary" id="bMove"${sel.size?"":" disabled"}>🚚 出庫・入庫（移動）</button><button id="bSelAll">表示中を全部選ぶ</button><button id="bSelClear"${sel.size?"":" disabled"}>選択を解除</button><span class="muted">チェックを入れた機器を、まとめて移動できます。1台だけ直すときは「✏ 編集」。</span>`;
+}
+function fillLists(){
+  const L=DATA.lists||{}, uni=(a,b)=>[...new Set([...(a||[]),...b].filter(Boolean))].sort((x,y)=>x.localeCompare(y));
+  const fill=(id,vals)=>{ $(id).innerHTML=vals.map(v=>`<option value="${esc(v)}">`).join(""); };
+  fill("dlModel",uni(L.model,distinct(i=>i.model))); fill("dlLoc",uni(L.loc,distinct(i=>i.loc)));
+  fill("dlShelf",uni(L.shelf,distinct(i=>i.shelf))); fill("dlMemo",uni(L.memo,[]));
+}
+const whoNote=(name)=>name?`（閲覧画面・${name}）`:"（閲覧画面）";
+function saveName(v){ CFG.name=String(v||"").trim().slice(0,30); lsSet(CFG_KEY,CFG); return CFG.name; }
+async function sendSync(patches,logs){
+  const j=await api("sync",null,{data:{patches,log:logs}});
+  if(!j.ok) return {err:errText(j)};
+  DATA=buildData(j); lsSet(CACHE_KEY,DATA); view.err="";
+  return {j};
+}
+let editingTag="";
+function openEdit(tag){
+  const it=DATA.items.find(i=>i.tag===tag); if(!it) return;
+  editingTag=tag; $("eTag").textContent=tag;
+  $("eModel").value=it.model; $("eStatus").innerHTML=STATUS.map(s=>`<option${s===it.status?" selected":""}>${s}</option>`).join("");
+  $("eLoc").value=it.loc; $("eShelf").value=it.shelf; $("eMemo").value=it.memo; $("eWho").value=CFG.name||""; $("eMsg").textContent="";
+  $("editDlg").showModal();
+}
+$("eCancel").addEventListener("click",()=>$("editDlg").close());
+$("eSave").addEventListener("click",async()=>{
+  const it=DATA.items.find(i=>i.tag===editingTag); if(!it) return;
+  const v={model:$("eModel").value.trim(),status:$("eStatus").value,loc:$("eLoc").value.trim(),shelf:$("eShelf").value.trim(),memo:$("eMemo").value.trim()};
+  if(!v.model){ $("eMsg").textContent="機種は空にできません。"; return; }
+  const fields={}, notes=[], name=saveName($("eWho").value);
+  const label={model:"機種",status:"状態",loc:"場所",shelf:"棚番",memo:"メモ"};
+  Object.keys(v).forEach(k=>{ if(v[k]!==(it[k]||"")){ fields[k]=v[k]; notes.push(k==="memo"?"メモ変更":`${label[k]} ${it[k]||"なし"} → ${v[k]||"なし"}`); } });
+  if(!notes.length){ $("editDlg").close(); return; }
+  const now=new Date().toISOString();
+  $("eSave").disabled=true; $("eMsg").textContent="保存しています…";
+  try{
+    const r=await sendSync([{tag:it.tag,fields,at:now}],[{t:now,tag:it.tag,act:"編集",note:notes.join(" / ")+whoNote(name)}]);
+    if(r.err){ $("eMsg").textContent=r.err; return; }
+    view.ok=`${it.tag} を保存しました。`+(r.j.ignored?"（台帳から削除済みのため、反映できませんでした）":"");
+    $("editDlg").close(); renderAll();
+  }catch(e){ $("eMsg").textContent=netErr(e); }
+  finally{ $("eSave").disabled=false; }
+});
+function openMove(){
+  const items=DATA.items.filter(i=>sel.has(i.tag)); if(!items.length) return;
+  $("mCount").textContent=items.length;
+  $("mList").textContent=items.slice(0,30).map(i=>`${i.tag}（${i.loc||"場所なし"}）`).join("、")+(items.length>30?` ほか${items.length-30}台`:"");
+  $("mStatus").innerHTML=`<option value="">変えない</option>`+STATUS.map(s=>`<option>${s}</option>`).join("");
+  $("mLoc").value=""; $("mShelf").value=""; $("mWho").value=CFG.name||""; $("mMsg").textContent="";
+  $("moveDlg").showModal(); setTimeout(()=>$("mLoc").focus(),50);
+}
+$("mCancel").addEventListener("click",()=>$("moveDlg").close());
+$("mSave").addEventListener("click",async()=>{
+  const kind=document.querySelector('input[name=mKind]:checked').value, toLoc=$("mLoc").value.trim(), toShelf=$("mShelf").value.trim(), toSt=$("mStatus").value;
+  if(!toLoc){ $("mMsg").textContent="移動先の保管場所を入れてください。"; return; }
+  const name=saveName($("mWho").value), now=new Date().toISOString(), patches=[], logs=[];
+  DATA.items.filter(i=>sel.has(i.tag)).forEach(i=>{
+    const f={}, n=[];
+    if(i.loc!==toLoc){ f.loc=toLoc; n.push(`${i.loc||"（場所なし）"} → ${toLoc}`); }
+    if(toShelf&&i.shelf!==toShelf){ f.shelf=toShelf; n.push(`棚番 ${i.shelf||"なし"} → ${toShelf}`); }
+    if(toSt&&i.status!==toSt){ f.status=toSt; n.push(`状態 ${i.status} → ${toSt}`); }
+    if(n.length){ patches.push({tag:i.tag,fields:f,at:now}); logs.push({t:now,tag:i.tag,act:kind,note:n.join(" / ")+whoNote(name)}); }
+  });
+  if(!patches.length){ $("mMsg").textContent="選んだ機器は、すべて移動先と同じでした（変更はありません）。"; return; }
+  $("mSave").disabled=true; $("mMsg").textContent="保存しています…";
+  try{
+    const r=await sendSync(patches,logs);
+    if(r.err){ $("mMsg").textContent=r.err; return; }
+    view.ok=`${patches.length} 台を${kind}しました（移動先：${toLoc}）。`+(r.j.ignored?`　${r.j.ignored} 台は台帳から削除済みのため、反映できませんでした。`:"");
+    sel.clear(); $("moveDlg").close(); renderAll();
+  }catch(e){ $("mMsg").textContent=netErr(e); }
+  finally{ $("mSave").disabled=false; }
+});
+$("selbar").addEventListener("click",e=>{
+  if(e.target.id==="bMove") openMove();
+  if(e.target.id==="bSelAll"){ filtered().forEach(i=>sel.add(i.tag)); renderList(); }
+  if(e.target.id==="bSelClear"){ sel.clear(); renderList(); }
+});
+$("listbox").addEventListener("change",e=>{
+  const t=e.target.dataset&&e.target.dataset.sel; if(t===undefined) return;
+  e.target.checked?sel.add(t):sel.delete(t);
+  e.target.closest(".lrow").classList.toggle("sel",e.target.checked); renderSelbar();
+});
+$("listbox").addEventListener("click",e=>{ const b=e.target.closest("[data-edit]"); if(b) openEdit(b.dataset.edit); });
 
 /* ---------- 操作 ---------- */
 function showTab(t){ view.tab=t; document.querySelectorAll(".tabs button").forEach(b=>b.classList.toggle("on",b.dataset.tab===t)); $("tab-models").hidden=t!=="models"; $("tab-list").hidden=t!=="list"; }
@@ -293,7 +447,7 @@ $("tab-models").addEventListener("click",e=>{ const r=e.target.closest(".mrow");
 $("fq").addEventListener("input",e=>{ view.q=e.target.value; view.limit=200; renderList(); });
 ["fst","fmodel","floc"].forEach(id=>$(id).addEventListener("change",e=>{ view[{fst:"st",fmodel:"model",floc:"loc"}[id]]=e.target.value; view.limit=200; renderList(); }));
 $("listbox").addEventListener("click",e=>{ if(e.target.id==="bMore"){ view.limit+=200; renderList(); } });
-$("bRefresh").addEventListener("click",()=>refresh());
+$("bRefresh").addEventListener("click",()=>{ view.ok=""; refresh(); });
 
 $("bCsv").addEventListener("click",()=>{
   if(!DATA) return;
@@ -318,8 +472,8 @@ $("sGo").addEventListener("click",async()=>{
   try{
     const j=await api("pull",{url,key});
     if(!j.ok){ m.textContent=errText(j); return; }
-    CFG={url,key}; lsSet(CFG_KEY,CFG);
-    DATA={items:cleanItems(j.items),minStock:(j.minStock&&typeof j.minStock==="object")?j.minStock:{},savedAt:String(j.savedAt||""),fetchedAt:new Date().toISOString()}; lsSet(CACHE_KEY,DATA);
+    CFG={url,key,name:CFG.name||""}; lsSet(CFG_KEY,CFG);
+    DATA=buildData(j); lsSet(CACHE_KEY,DATA);
     view.err=""; m.textContent=""; renderAll();
   }catch(e){ m.textContent=netErr(e); }
 });
@@ -336,7 +490,8 @@ $("bShare").addEventListener("click",async()=>{
   $("shareDlg").showModal();
   try{
     const p=await api("ping");
-    if(p&&p.ok&&p.role==="owner"){ w.hidden=false; w.className="banner err"; w.innerHTML="いま設定している合言葉は、<b>書き込みもできる合言葉（KEY）</b>です。人に渡すなら、スプレッドシート側で「閲覧専用の合言葉（VIEW_KEY）」を設定して、その合言葉で接続し直してから、リンクを作ってください。"; }
+    if(p&&p.ok&&p.role==="owner"){ w.hidden=false; w.className="banner err"; w.innerHTML="いま設定している合言葉は、<b>すべてができる合言葉（KEY）</b>です。人に渡すなら、スプレッドシート側で「閲覧専用の合言葉（VIEW_KEY）」か「編集用の合言葉（EDIT_KEY）」を設定して、その合言葉で接続し直してから、リンクを作ってください。"; }
+    else if(p&&p.ok&&p.role==="editor"){ w.hidden=false; w.className="banner"; w.textContent="編集用の合言葉（EDIT_KEY）です。このリンクを開いた人は、台帳の閲覧に加えて、編集・出庫・入庫ができます（削除・新規登録・設定の変更はできません）。渡す相手に注意してください。"; }
     else if(p&&p.ok&&p.role==="viewer"){ w.hidden=false; w.className="banner"; w.style.background="var(--ok-bg)"; w.style.color="var(--ok)"; w.textContent="閲覧専用の合言葉です。このリンクでは、台帳を読むことだけができます（書き込みはできません）。"; }
     else if(p&&p.ok){ w.hidden=false; w.textContent="スプレッドシート側のコードが古いため、この合言葉が書き込みもできるものかを、判定できません。Apps Script を最新のコードに更新してください。"; }
   }catch(e){}
