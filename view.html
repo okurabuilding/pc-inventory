@@ -74,6 +74,7 @@ input[type=text],input[type=search],input[type=password],select{font:inherit;pad
 .lrow .c-upd{font-size:12px;color:var(--sub)}
 .more{text-align:center;padding:12px}
 .empty{padding:24px;text-align:center;color:var(--sub)}
+[tabindex="-1"]:focus{outline:none}
 dialog{border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--text);max-width:520px;width:calc(100% - 32px);padding:16px}
 dialog::backdrop{background:rgba(0,0,0,.4)}
 .setup{max-width:520px;margin:30px auto}
@@ -171,7 +172,7 @@ dialog::backdrop{background:rgba(0,0,0,.4)}
 </div>
 
 <dialog id="shareDlg">
-  <h3 style="margin:0 0 6px;font-size:16px">🔗 共有リンク</h3>
+  <h3 style="margin:0 0 6px;font-size:16px" tabindex="-1" autofocus>🔗 共有リンク</h3>
   <div id="shareWarn" class="banner" hidden></div>
   <div class="muted">このリンクを開くと、接続先と合言葉が、相手の端末に設定されます。<b>リンクを知っている人は、台帳を読めます。</b>人に渡すときは、すべてができる合言葉（KEY）ではなく、<b>閲覧専用（VIEW_KEY）</b>か<b>編集用（EDIT_KEY）</b>の合言葉のリンクにしてください。</div>
   <input type="text" id="shareUrl" readonly style="margin-top:8px">
@@ -182,7 +183,7 @@ dialog::backdrop{background:rgba(0,0,0,.4)}
 </dialog>
 
 <dialog id="editDlg">
-  <h3 style="margin:0 0 6px;font-size:16px">✏ 編集：<span class="tag" id="eTag"></span></h3>
+  <h3 style="margin:0 0 6px;font-size:16px" tabindex="-1" autofocus>✏ 編集：<span class="tag" id="eTag"></span></h3>
   <div class="formgrid">
     <label class="full">機種<input type="text" id="eModel" list="dlModel" autocomplete="off"></label>
     <label>状態<select id="eStatus"></select></label>
@@ -196,7 +197,7 @@ dialog::backdrop{background:rgba(0,0,0,.4)}
 </dialog>
 
 <dialog id="moveDlg">
-  <h3 style="margin:0 0 6px;font-size:16px">🚚 出庫・入庫（保管場所の変更）：<span id="mCount"></span> 台</h3>
+  <h3 style="margin:0 0 6px;font-size:16px" tabindex="-1" autofocus>🚚 出庫・入庫（保管場所の変更）：<span id="mCount"></span> 台</h3>
   <div class="muted" id="mList" style="word-break:break-all"></div>
   <div class="formgrid">
     <label class="full">種類<span class="seg"><label><input type="radio" name="mKind" value="出庫" checked>出庫（引き渡す）</label><label><input type="radio" name="mKind" value="入庫">入庫（受け取る）</label></span></label>
@@ -214,12 +215,15 @@ dialog::backdrop{background:rgba(0,0,0,.4)}
 "use strict";
 /* 閲覧用ページ。データはページに入れず、スプレッドシート（Apps Script）から読み込む。
    編集用の合言葉（EDIT_KEY）か KEY で接続し、スプレッドシート側のコードが版3以上のときだけ、編集・出庫・入庫ができる（変えた項目だけを送る） */
-const BUILD="20261016-151543";
+const BUILD="20261019-171818";
 const STATUS=["在庫","貸出中","修理中","動作未確認","故障","廃棄"];
 const SCOL={"在庫":"var(--c-stock)","貸出中":"var(--c-loan)","修理中":"var(--c-repair)","動作未確認":"var(--c-unk)","故障":"var(--c-broken)","廃棄":"var(--c-scrap)"};
 const URL_RE=/^https:\/\/script\.google\.com\/(a\/macros\/[^/]+\/|macros\/)s\/[A-Za-z0-9_-]+\/exec$/;
 const CFG_KEY="pc_inventory_view_cfg_v1", CACHE_KEY="pc_inventory_view_cache_v1";
 const $=(id)=>document.getElementById(id);
+/* スマホ・タブレットでは、ダイアログを開いても入力欄を自動で選ばない（キーボードを勝手に出さない） */
+const TOUCH=!!(window.matchMedia&&matchMedia("(hover: none) and (pointer: coarse)").matches);
+function openDlg(d){ d.showModal(); const a=document.activeElement; if(TOUCH&&a&&d.contains(a)&&/^(INPUT|TEXTAREA)$/.test(a.tagName)) a.blur(); }
 const esc=(s)=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const lsGet=(k)=>{ try{ return JSON.parse(localStorage.getItem(k)); }catch(e){ return null; } };
 const lsSet=(k,v)=>{ try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){} };
@@ -377,7 +381,7 @@ function openEdit(tag){
   editingTag=tag; $("eTag").textContent=tag;
   $("eModel").value=it.model; $("eStatus").innerHTML=STATUS.map(s=>`<option${s===it.status?" selected":""}>${s}</option>`).join("");
   $("eLoc").value=it.loc; $("eShelf").value=it.shelf; $("eMemo").value=it.memo; $("eWho").value=CFG.name||""; $("eMsg").textContent="";
-  $("editDlg").showModal();
+  openDlg($("editDlg"));
 }
 $("eCancel").addEventListener("click",()=>$("editDlg").close());
 $("eSave").addEventListener("click",async()=>{
@@ -404,7 +408,7 @@ function openMove(){
   $("mList").textContent=items.slice(0,30).map(i=>`${i.tag}（${i.loc||"場所なし"}）`).join("、")+(items.length>30?` ほか${items.length-30}台`:"");
   $("mStatus").innerHTML=`<option value="">変えない</option>`+STATUS.map(s=>`<option>${s}</option>`).join("");
   $("mLoc").value=""; $("mShelf").value=""; $("mWho").value=CFG.name||""; $("mMsg").textContent="";
-  $("moveDlg").showModal(); setTimeout(()=>$("mLoc").focus(),50);
+  openDlg($("moveDlg")); if(!TOUCH) setTimeout(()=>$("mLoc").focus(),50);
 }
 $("mCancel").addEventListener("click",()=>$("moveDlg").close());
 $("mSave").addEventListener("click",async()=>{
@@ -487,7 +491,7 @@ const unb64u=(s)=>atob(s.replace(/-/g,"+").replace(/_/g,"/"));
 $("bShare").addEventListener("click",async()=>{
   $("shareUrl").value=location.origin+location.pathname+"#s="+b64u(JSON.stringify({u:CFG.url,k:CFG.key}));
   $("shareMsg").textContent=""; const w=$("shareWarn"); w.hidden=true; w.className="banner";
-  $("shareDlg").showModal();
+  openDlg($("shareDlg"));
   try{
     const p=await api("ping");
     if(p&&p.ok&&p.role==="owner"){ w.hidden=false; w.className="banner err"; w.innerHTML="いま設定している合言葉は、<b>すべてができる合言葉（KEY）</b>です。人に渡すなら、スプレッドシート側で「閲覧専用の合言葉（VIEW_KEY）」か「編集用の合言葉（EDIT_KEY）」を設定して、その合言葉で接続し直してから、リンクを作ってください。"; }

@@ -131,6 +131,8 @@ dialog::backdrop{background:rgba(0,0,0,.4)}
 .pk-arrow{padding:4px 12px;font-size:16px;line-height:1}
 .pk-list{position:fixed;z-index:3000;left:0;top:0;border:1px solid var(--line);border-radius:8px;background:var(--card);overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;box-shadow:0 6px 18px rgba(0,0,0,.28)}
 .pk-list[hidden]{display:none}
+.pickbox.need .pk-in{border-color:var(--ng);box-shadow:0 0 0 2px var(--ng-bg)}   /* 未入力の欄（自動では選ばず、赤枠で示す） */
+[tabindex="-1"]:focus{outline:none}
 .pk-opt{padding:9px 12px;border-bottom:1px solid var(--line);cursor:pointer;font-size:15px;color:var(--text)}
 .pk-opt:last-child{border-bottom:none}
 .pk-opt.cur{font-weight:700;color:var(--accent)}
@@ -206,7 +208,7 @@ textarea.lsarea{min-height:96px;resize:vertical;font-size:15px}
 
 <dialog id="editDlg">
   <form method="dialog" id="editForm">
-    <div class="tagbig" id="editTag"></div>
+    <div class="tagbig" id="editTag" tabindex="-1" autofocus></div>
     <div class="formgrid">
       <label class="full">機種<span class="pickbox" id="editModelBox" data-list="model" data-ph="機種名を入力"></span></label>
       <label>状態<select id="editStatus"></select></label>
@@ -363,7 +365,7 @@ function pkClose(box){
   box.dataset.touch=""; pkOpen.delete(box);
 }
 function pkChoose(box,v){
-  const inp=box.querySelector(".pk-in"); inp.value=v; pkClose(box);
+  const inp=box.querySelector(".pk-in"); inp.value=v; pkClose(box); box.classList.remove("need");
   if(document.activeElement===inp) inp.blur();   // 入力欄の選択を外す（キーボードも閉じる）
 }
 function pkMove(box,d){
@@ -381,14 +383,14 @@ document.addEventListener("focusout",e=>{
   const box=i.closest(".pickbox");
   setTimeout(()=>{ if(!box.contains(document.activeElement) && !box.dataset.touch) pkClose(box); },0);   // 一覧を指で触っている間は閉じない
 });
-document.addEventListener("input",e=>{ const i=e.target; if(i.classList&&i.classList.contains("pk-in")) pkRender(i.closest(".pickbox"),true); });
+document.addEventListener("input",e=>{ const i=e.target; if(i.classList&&i.classList.contains("pk-in")){ const b=i.closest(".pickbox"); b.classList.remove("need"); pkRender(b,true); } });
 document.addEventListener("pointerdown",e=>{
   const t=e.target; if(!t.closest) return;
   const inList=t.closest(".pk-list"), arrow=t.closest(".pk-arrow");
   if(inList){ inList.closest(".pickbox").dataset.touch="1"; return; }     // 一覧のスクロール開始：選択はしない（指を離したときの「タップ」で選ぶ）
   if(arrow){
     e.preventDefault(); const box=arrow.closest(".pickbox"), inp=box.querySelector(".pk-in");
-    if(box.querySelector(".pk-list").hidden){ inp.focus(); pkRender(box,false); } else pkClose(box);
+    if(box.querySelector(".pk-list").hidden){ if(!TOUCH) inp.focus(); pkRender(box,false); } else pkClose(box);   // スマホでは一覧だけ（キーボードは、欄をタップしたときだけ）
     return;
   }
   [...pkOpen].forEach(box=>{ if(!t.closest(".pickbox")||t.closest(".pickbox")!==box) pkClose(box); });   // 外側をタップしたら閉じる
@@ -499,6 +501,18 @@ $("camBtn").addEventListener("click",()=>{ camOn?stopCam():startCam(); });
 $("camVideo").addEventListener("loadedmetadata",()=>{ if(camOn) requestAnimationFrame(()=>{ const r=$("result").getBoundingClientRect(), row=$("camRow").getBoundingClientRect(), vh=(window.visualViewport?window.visualViewport.height:window.innerHeight); if(!$("result").firstElementChild || r.bottom-row.top<=vh-16) alignCamera(); }); });   // 映像の大きさが決まると、下の内容がずれるため
 document.addEventListener("visibilitychange",()=>{ if(document.hidden && camOn) stopCam(); });
 
+/* ---------- 入力欄の自動選択 ----------
+   読み取り後などに入力欄を自動で選ぶのは、パソコン（バーコードリーダー用）だけ。
+   スマホ・タブレットでは、画面を動かすだけにして、キーボードやプルダウンを勝手に出さない（入力は、欄をタップしたときだけ）。
+   プルダウンの欄は、パソコンでも自動では選ばない（選ぶと一覧が開くため） */
+const TOUCH=!!(window.matchMedia&&matchMedia("(hover: none) and (pointer: coarse)").matches);
+function focusScan(){
+  const s=$("scanInput");
+  if(!TOUCH) s.focus();
+  else if(document.activeElement===s) s.blur();   // 手入力で確定したときも、キーボードを閉じて結果を見やすくする
+}
+function markNeed(id){ const b=$(id); if(b) b.classList.add("need"); }   // 未入力の欄を赤枠で示す
+
 /* ---------- モード ---------- */
 let mode="lookup";
 const HINTS = {
@@ -515,7 +529,7 @@ function setMode(m){
   $("modeHint").textContent = HINTS[m];
   $("result").innerHTML="";
   if(m==="stocktake" && !S.stocktakeStart){ startStocktake(false); }
-  (m==="bulk" && !pickVal("bulkModelBox") ? $("bulkModelBox").querySelector(".pk-in") : (m==="move" && !pickVal("moveLocBox") ? $("moveLocBox").querySelector(".pk-in") : $("scanInput"))).focus();
+  focusScan();
 }
 $("modes").addEventListener("change",e=>{ if(e.target.name==="mode") setMode(e.target.value); });
 
@@ -548,7 +562,7 @@ $("scanForm").addEventListener("submit",e=>{
   if(r.err) showResult("warn",`<h3>サービスタグを取り出せませんでした</h3><div>${esc(r.err)}</div>`);
   else if(r.choices) showResult("warn",`<h3>サービスタグの候補が複数あります。どれですか？</h3><div class="row">${r.choices.map(t=>`<button class="primary" data-act="pickTag" data-tag="${esc(t)}">${esc(t)}</button>`).join("")}</div>`);
   else if(r.tag) handleScan(r.tag);
-  $("scanInput").focus();
+  focusScan();
 });
 /* 長い文字列や区切りのある文字が入ってきたら、入力欄の中でサービスタグだけに整える（確定前に目で確認できる） */
 $("scanInput").addEventListener("input",e=>{
@@ -593,7 +607,7 @@ function handleScan(tag){
   if(mode==="move"){   // 出庫・入庫：保管場所（と棚番・状態）を変える
     const kind=(document.querySelector('input[name=mvk]:checked')||{}).value||"出庫";
     const toLoc=pickVal("moveLocBox"), toShelf=pickVal("moveShelfBox"), toSt=$("moveStatus").value;
-    if(!toLoc){ beep(false); showResult("ng","<h3>移動先が未入力です</h3><div>上の「移動先の保管場所」を選ぶか入力してから、読み取ってください。</div>"); $("moveLocBox").querySelector(".pk-in").focus(); return; }
+    if(!toLoc){ beep(false); showResult("ng","<h3>移動先が未入力です</h3><div>上の「移動先の保管場所」を選ぶか入力してから、読み取ってください。</div>"); markNeed("moveLocBox"); return; }
     if(!it){ beep(false); showResult("ng",`<h3>台帳にない機器です</h3><div class="tagbig">${esc(tag)}</div><div>出庫・入庫できるのは、登録済みの機器だけです。先に「照会・登録」で登録してください。</div>`); return; }
     const prev={loc:it.loc||"",shelf:it.shelf||"",status:it.status};
     const parts=[];
@@ -610,7 +624,7 @@ function handleScan(tag){
   }
   if(mode==="bulk"){
     const model=pickVal("bulkModelBox");
-    if(!model){ beep(false); showResult("ng","<h3>機種が未選択です</h3><div>上の「入荷する機種」を選ぶか入力してから読み取ってください。</div>"); $("bulkModelBox").querySelector(".pk-in").focus(); return; }
+    if(!model){ beep(false); showResult("ng","<h3>機種が未選択です</h3><div>上の「入荷する機種」を選ぶか入力してから読み取ってください。</div>"); markNeed("bulkModelBox"); return; }
     if(it){ beep(false); showResult("warn",`<h3>登録済みです</h3><div class="tagbig">${esc(tag)}</div><div>${esc(it.model)} ／ ${badge(it.status)}</div>`); return; }
     const status=$("bulkStatus").value||"在庫";
     addItem({tag,model,status,loc:pickVal("bulkLocBox"),shelf:pickVal("bulkShelfBox"),memo:pickVal("bulkMemoBox")});
@@ -675,7 +689,6 @@ function showUnknown(tag,fromStocktake,hint){
       <span class="muted">機種・保管場所は、前回登録した内容が入っています（変更できます）。機種が一覧にないときは、そのまま入力してください（${models.length}機種を登録済み）</span></div>
     </form>`);
   mountPick("nfModelBox",lastModel); mountPick("nfLocBox",lastLoc); mountPick("nfShelfBox",lastShelf); mountPick("nfMemoBox","");
-  setTimeout(()=>{ const s=$("nfModelBox").querySelector(".pk-in"); if(s) s.focus(); },0);
 }
 /* 直前に登録した機種・保管場所（次の登録フォームに最初から入れる）。アプリを開き直しても残す */
 const LAST_KEY="pc_inventory_last_v1";
@@ -701,17 +714,17 @@ $("result").addEventListener("submit",e=>{
   offerAddToList("loc",nfLoc); offerAddToList("shelf",nfShelf); offerAddToList("memo",nfMemo);
   if(f.dataset.st==="1"){ const it=find(tag); it.checked=nowIso(); save(); }
   showResult("ok",`<h3>登録しました</h3><div class="tagbig">${esc(tag)}</div><div>${esc(model)}</div>`);
-  $("scanInput").focus();
+  focusScan();
 });
 $("result").addEventListener("click",e=>{
   const b=e.target.closest("button[data-act]"); if(!b) return;
   const act=b.dataset.act;
-  if(act==="dismiss"){ flushBulkMemo(); $("result").innerHTML=""; $("scanInput").focus(); }
+  if(act==="dismiss"){ flushBulkMemo(); $("result").innerHTML=""; focusScan(); }
   if(act==="bmSave"){
     const v=pickVal("bmBox"); if(!v){ alert("メモを入力するか、候補から選んでください。"); return; }
     const it=applyBulkMemo(v);
     if(it) showResult("ok",`<h3>メモを付けました</h3><div class="tagbig">${esc(it.tag)}</div><div>${esc(it.model)} ／ メモ：${esc(it.memo)}</div>`);
-    bulkLast=null; $("scanInput").focus();
+    bulkLast=null; focusScan();
   }
   if(act==="moveUndo"){   // 直前の出庫・入庫を取り消す（元の場所・棚番・状態に戻す）
     const it=find(b.dataset.tag);
@@ -720,7 +733,7 @@ $("result").addEventListener("click",e=>{
     addLog(it.tag,"取り消し",`${lastMove.kind}を取り消し（${lastMove.toLoc} → ${pv.loc||"（場所なし）"}）`); moveDone.delete(it.tag); lastMove=null;
     save(); renderAll();
     showResult("warn",`<h3>取り消しました</h3><div class="tagbig">${esc(it.tag)}</div><div>${esc(it.model)} ／ ${esc(it.loc||"（場所なし）")}${it.shelf?` ／ 棚番：${esc(it.shelf)}`:""} ／ ${badge(it.status)}</div>`);
-    $("scanInput").focus();
+    focusScan();
   }
   if(act==="pickTag"){ $("result").innerHTML=""; handleScan(b.dataset.tag); }
   if(act==="ocrGo") ocrSelGo(false);
@@ -752,6 +765,8 @@ function openEdit(tag){
   mountPick("editModelBox",it.model); mountPick("editLocBox",it.loc||""); mountPick("editShelfBox",it.shelf||""); mountPick("editMemoBox",it.memo||"");
   $("editStatus").value=it.status;
   $("editDlg").showModal();
+  const a=document.activeElement;   // 念のため：入力欄が選ばれていたら外す（一覧を勝手に開かない）
+  if(a&&a.classList&&a.classList.contains("pk-in")){ a.blur(); pkClose(a.closest(".pickbox")); }
 }
 $("editCancel").onclick=()=>$("editDlg").close();
 $("editForm").addEventListener("submit",(ev)=>{
@@ -1499,7 +1514,7 @@ $("ocrFile").addEventListener("change",e=>{ const f=e.target.files[0]; e.target.
    iPhoneのホーム画面アプリは、公開した新しい版を取り込まず、古いページを使い続けることがある（保存期間は10分）。
    起動時とアプリに戻ったときに version.json を確認し、版が違えば、URLに「?v=版番号」を付けて開き直す。
    データ（端末内の保存）は、URLが変わっても消えない。BUILD は公開時に書き換える（開発中は "dev" で、確認しない） */
-const BUILD="20261016-151543";
+const BUILD="20261019-171818";
 let updCheckedAt=0;
 async function checkUpdate(force){
   try{
