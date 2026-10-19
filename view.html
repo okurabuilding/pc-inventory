@@ -215,7 +215,7 @@ dialog::backdrop{background:rgba(0,0,0,.4)}
 "use strict";
 /* 閲覧用ページ。データはページに入れず、スプレッドシート（Apps Script）から読み込む。
    編集用の合言葉（EDIT_KEY）か KEY で接続し、スプレッドシート側のコードが版3以上のときだけ、編集・出庫・入庫ができる（変えた項目だけを送る） */
-const BUILD="20261019-171818";
+const BUILD="20261019-205556";
 const STATUS=["在庫","貸出中","修理中","動作未確認","故障","廃棄"];
 const SCOL={"在庫":"var(--c-stock)","貸出中":"var(--c-loan)","修理中":"var(--c-repair)","動作未確認":"var(--c-unk)","故障":"var(--c-broken)","廃棄":"var(--c-scrap)"};
 const URL_RE=/^https:\/\/script\.google\.com\/(a\/macros\/[^/]+\/|macros\/)s\/[A-Za-z0-9_-]+\/exec$/;

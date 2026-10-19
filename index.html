@@ -512,6 +512,17 @@ function focusScan(){
   else if(document.activeElement===s) s.blur();   // 手入力で確定したときも、キーボードを閉じて結果を見やすくする
 }
 function markNeed(id){ const b=$(id); if(b) b.classList.add("need"); }   // 未入力の欄を赤枠で示す
+/* 登録・閉じる など、次の読み取りに進むとき。スマホでは入力欄を選ばない代わりに、
+   「カメラで読み取る」ボタンが画面の外にあれば、入力欄とボタンが見える位置へ動かす（以前は、入力欄を選んだことで自動で動いていた） */
+function readyNext(){
+  focusScan();
+  if(!TOUCH) return;
+  requestAnimationFrame(()=>{   // 結果の表示による移動（revealResult）の後に行う
+    if(camOn) return;            // カメラが動いている間は、revealResult が映像の位置に合わせる
+    const row=$("camRow").getBoundingClientRect(), vh=(window.visualViewport?window.visualViewport.height:window.innerHeight);
+    if(row.top<0 || row.bottom>vh) $("scanForm").scrollIntoView({behavior:"auto",block:"start"});
+  });
+}
 
 /* ---------- モード ---------- */
 let mode="lookup";
@@ -714,17 +725,17 @@ $("result").addEventListener("submit",e=>{
   offerAddToList("loc",nfLoc); offerAddToList("shelf",nfShelf); offerAddToList("memo",nfMemo);
   if(f.dataset.st==="1"){ const it=find(tag); it.checked=nowIso(); save(); }
   showResult("ok",`<h3>登録しました</h3><div class="tagbig">${esc(tag)}</div><div>${esc(model)}</div>`);
-  focusScan();
+  readyNext();
 });
 $("result").addEventListener("click",e=>{
   const b=e.target.closest("button[data-act]"); if(!b) return;
   const act=b.dataset.act;
-  if(act==="dismiss"){ flushBulkMemo(); $("result").innerHTML=""; focusScan(); }
+  if(act==="dismiss"){ flushBulkMemo(); $("result").innerHTML=""; readyNext(); }
   if(act==="bmSave"){
     const v=pickVal("bmBox"); if(!v){ alert("メモを入力するか、候補から選んでください。"); return; }
     const it=applyBulkMemo(v);
     if(it) showResult("ok",`<h3>メモを付けました</h3><div class="tagbig">${esc(it.tag)}</div><div>${esc(it.model)} ／ メモ：${esc(it.memo)}</div>`);
-    bulkLast=null; focusScan();
+    bulkLast=null; readyNext();
   }
   if(act==="moveUndo"){   // 直前の出庫・入庫を取り消す（元の場所・棚番・状態に戻す）
     const it=find(b.dataset.tag);
@@ -733,7 +744,7 @@ $("result").addEventListener("click",e=>{
     addLog(it.tag,"取り消し",`${lastMove.kind}を取り消し（${lastMove.toLoc} → ${pv.loc||"（場所なし）"}）`); moveDone.delete(it.tag); lastMove=null;
     save(); renderAll();
     showResult("warn",`<h3>取り消しました</h3><div class="tagbig">${esc(it.tag)}</div><div>${esc(it.model)} ／ ${esc(it.loc||"（場所なし）")}${it.shelf?` ／ 棚番：${esc(it.shelf)}`:""} ／ ${badge(it.status)}</div>`);
-    focusScan();
+    readyNext();
   }
   if(act==="pickTag"){ $("result").innerHTML=""; handleScan(b.dataset.tag); }
   if(act==="ocrGo") ocrSelGo(false);
@@ -1514,7 +1525,7 @@ $("ocrFile").addEventListener("change",e=>{ const f=e.target.files[0]; e.target.
    iPhoneのホーム画面アプリは、公開した新しい版を取り込まず、古いページを使い続けることがある（保存期間は10分）。
    起動時とアプリに戻ったときに version.json を確認し、版が違えば、URLに「?v=版番号」を付けて開き直す。
    データ（端末内の保存）は、URLが変わっても消えない。BUILD は公開時に書き換える（開発中は "dev" で、確認しない） */
-const BUILD="20261019-171818";
+const BUILD="20261019-205556";
 let updCheckedAt=0;
 async function checkUpdate(force){
   try{
