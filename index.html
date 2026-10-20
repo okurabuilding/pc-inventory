@@ -961,7 +961,7 @@ function renderData(){
         <button id="syRestore">スプレッドシートから復元</button>
         <button id="syOff" class="danger">連携を解除</button>
       </div>
-      <div class="muted" style="margin-top:6px">📊 <a href="view.html" style="color:var(--accent)">閲覧用ページを開く</a>（PC・スマホで、スプレッドシートの内容を見られます。読み取り専用）</div>
+      <div class="muted" style="margin-top:6px">📊 <a href="view.html" style="color:var(--accent)">閲覧用ページを開く</a>（PC・スマホで台帳を見られて、編集・出庫・入庫もできます。他の人には、閲覧用ページの「🔗 共有リンク」を送ってください。合言葉は要りません）</div>
       <div id="syDetail" class="muted"></div>
       <div id="syMsg" class="muted"></div>
     </div>
@@ -1255,7 +1255,8 @@ function renderSync(){
   bar.className="syncbar "+s.cls; bar.textContent=s.t;
   const d=$("syDetail");
   const shelfWarn=(syncOn()&&SY.ver&&SY.ver<2&&S.items.some(i=>i.shelf))?"　⚠ 棚番をクラウドに保存するには、スプレッドシート側のコードの更新が必要です（今は、この端末にだけ保存されています）。":"";
-  if(d) d.textContent=!syncOn()?"":(SY.lastErr?"⚠ "+SY.lastErr:(SY.lastOk?"最後に保存できた時刻："+fmt(SY.lastOk):"まだ1回も送信していません。"))+shelfWarn;
+  const viewWarn=(syncOn()&&SY.ver&&SY.ver<4)?"　ℹ 閲覧用ページを合言葉なしで共有するには、スプレッドシート側のコードを最新（版4）に更新してください。":"";
+  if(d) d.textContent=!syncOn()?"":(SY.lastErr?"⚠ "+SY.lastErr:(SY.lastOk?"最後に保存できた時刻："+fmt(SY.lastOk):"まだ1回も送信していません。"))+shelfWarn+viewWarn;
 }
 $("syncBar").addEventListener("click",()=>showTab("data"));
 window.addEventListener("online",()=>{ if(SY.dirty) pushNow(); });
@@ -1273,7 +1274,7 @@ $("tab-data").addEventListener("click",async e=>{
     try{
       const p=await api("ping",{}, {url,key});
       if(!p.ok){ msg(syErrText(p)); return; }
-      if(p.role && p.role!=="owner"){ msg(p.role==="editor"?"これは編集用の合言葉（EDIT_KEY）です。在庫管理アプリには、すべてができる合言葉（KEY）を入れてください（EDIT_KEY は閲覧用ページで使います）。":"これは閲覧専用の合言葉（VIEW_KEY）です。在庫管理アプリには、すべてができる合言葉（KEY）を入れてください。"); return; }
+      if(p.role && p.role!=="owner"){ msg("この合言葉は、在庫管理アプリでは使えません。スプレッドシートの Apps Script に書いた KEY を入れてください。"); return; }
       const changed=(url!==SY.url||key!==SY.key);
       SY.url=url; SY.key=key; SY.ver=p.ver||1; if(changed){ SY.lastOk=null; SY.dirty=false; } SY.lastErr=""; sySave(); renderSync();
       msg(`接続できました（スプレッドシート「${p.sheet}」・台帳 ${p.rows} 台）。`+(p.rows>0&&(sampleLeft()||!S.items.length)?" 既にデータがあります。「スプレッドシートから復元」を押してください。":" 次に「今すぐ送信」を押すと、この端末のデータを送ります。"));
@@ -1525,7 +1526,7 @@ $("ocrFile").addEventListener("change",e=>{ const f=e.target.files[0]; e.target.
    iPhoneのホーム画面アプリは、公開した新しい版を取り込まず、古いページを使い続けることがある（保存期間は10分）。
    起動時とアプリに戻ったときに version.json を確認し、版が違えば、URLに「?v=版番号」を付けて開き直す。
    データ（端末内の保存）は、URLが変わっても消えない。BUILD は公開時に書き換える（開発中は "dev" で、確認しない） */
-const BUILD="20261019-205556";
+const BUILD="20261020-113819";
 let updCheckedAt=0;
 async function checkUpdate(force){
   try{

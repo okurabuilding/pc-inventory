@@ -80,7 +80,7 @@ dialog::backdrop{background:rgba(0,0,0,.4)}
 .setup{max-width:520px;margin:30px auto}
 .setup label{display:block;font-size:13px;color:var(--sub);margin:10px 0 3px}
 .foot{margin:18px 0;text-align:center}
-/* 編集・出庫・入庫（書き込みできる合言葉のとき） */
+/* 編集・出庫・入庫 */
 .selbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--accent-bg);border-radius:8px;padding:6px 10px;margin-bottom:8px}
 .selbox{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
 .selbox input{width:18px;height:18px;margin:0}
@@ -135,11 +135,9 @@ dialog::backdrop{background:rgba(0,0,0,.4)}
   <!-- 接続の設定 -->
   <div class="card setup" id="setup" hidden>
     <h2 style="margin:0 0 4px;font-size:17px">はじめに：接続先を設定します</h2>
-    <div class="muted">在庫管理アプリの「データ」タブに入れている、Apps Script の「ウェブアプリのURL」と、<b>合言葉</b>（閲覧用、または編集用）を入れます。編集用の合言葉なら、このページで編集・出庫・入庫ができます。この端末のブラウザの中にだけ保存されます。共有リンクをもらった場合は、リンクを開くだけで設定されます。</div>
+    <div class="muted"><b>共有リンクをもらった場合は、リンクを開くだけで設定されます</b>（合言葉は要りません）。自分で設定するときは、在庫管理アプリの「データ」タブに入れている、Apps Script の「ウェブアプリのURL」を入れます。この端末のブラウザの中にだけ保存されます。</div>
     <label for="sUrl">接続先URL</label>
     <input type="text" id="sUrl" placeholder="https://script.google.com/macros/s/…/exec" autocapitalize="off" autocomplete="off" spellcheck="false">
-    <label for="sKey">合言葉（12文字以上）</label>
-    <input type="password" id="sKey" autocomplete="off" autocapitalize="off" spellcheck="false">
     <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap"><button class="primary" id="sGo">接続して表示</button><button id="sApp" hidden>在庫管理アプリの接続設定を使う</button></div>
     <div class="muted" id="sMsg" style="margin-top:8px"></div>
   </div>
@@ -174,7 +172,7 @@ dialog::backdrop{background:rgba(0,0,0,.4)}
 <dialog id="shareDlg">
   <h3 style="margin:0 0 6px;font-size:16px" tabindex="-1" autofocus>🔗 共有リンク</h3>
   <div id="shareWarn" class="banner" hidden></div>
-  <div class="muted">このリンクを開くと、接続先と合言葉が、相手の端末に設定されます。<b>リンクを知っている人は、台帳を読めます。</b>人に渡すときは、すべてができる合言葉（KEY）ではなく、<b>閲覧専用（VIEW_KEY）</b>か<b>編集用（EDIT_KEY）</b>の合言葉のリンクにしてください。</div>
+  <div class="muted">このリンクを開くだけで、相手の端末に接続先が設定されます（合言葉は要りません）。<b>リンクを持っている人は、台帳の閲覧・編集・出庫・入庫ができます</b>（機器の削除・新規登録は、在庫管理アプリからだけ）。渡す相手に注意してください。共有をやめたいときは、Apps Script で新しいURLを作り直します（手順はコードの先頭に書いてあります）。</div>
   <input type="text" id="shareUrl" readonly style="margin-top:8px">
   <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
     <button id="shareCopy" class="primary">コピー</button><button id="shareClose">閉じる</button>
@@ -214,8 +212,9 @@ dialog::backdrop{background:rgba(0,0,0,.4)}
 <script>
 "use strict";
 /* 閲覧用ページ。データはページに入れず、スプレッドシート（Apps Script）から読み込む。
-   編集用の合言葉（EDIT_KEY）か KEY で接続し、スプレッドシート側のコードが版3以上のときだけ、編集・出庫・入庫ができる（変えた項目だけを送る） */
-const BUILD="20261019-205556";
+   合言葉は使わない（版4〜）。Apps Script のURLを知っている人が、閲覧・編集・出庫・入庫できる（変えた項目だけを送る）。
+   CFG.key は、古い共有リンク・設定に入っていた合言葉。スプレッドシート側が版3のときだけ使い、版4で断られたら、合言葉なしでやり直して消す */
+const BUILD="20261020-113819";
 const STATUS=["在庫","貸出中","修理中","動作未確認","故障","廃棄"];
 const SCOL={"在庫":"var(--c-stock)","貸出中":"var(--c-loan)","修理中":"var(--c-repair)","動作未確認":"var(--c-unk)","故障":"var(--c-broken)","廃棄":"var(--c-scrap)"};
 const URL_RE=/^https:\/\/script\.google\.com\/(a\/macros\/[^/]+\/|macros\/)s\/[A-Za-z0-9_-]+\/exec$/;
@@ -237,16 +236,25 @@ let DATA=lsGet(CACHE_KEY);                    // {items,minStock,savedAt,fetched
 const view={tab:"models",q:"",st:"",model:"",loc:"",limit:200,err:"",loading:false};
 
 /* ---------- 通信 ---------- */
-async function api(action,creds,extra){
-  const c=creds||CFG, ctl=new AbortController(), to=setTimeout(()=>ctl.abort(),25000);
+async function post(url,key,action,extra){
+  const ctl=new AbortController(), to=setTimeout(()=>ctl.abort(),25000);
   try{
-    const res=await fetch(c.url,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(Object.assign({key:c.key,action},extra||{})),signal:ctl.signal,redirect:"follow",credentials:"omit",cache:"no-store"});
+    const res=await fetch(url,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(Object.assign(key?{key}:{},{action},extra||{})),signal:ctl.signal,redirect:"follow",credentials:"omit",cache:"no-store"});
     const text=await res.text(); let j;
     try{ j=JSON.parse(text); }catch(_){ const e=new Error("not_json"); e.code="not_json"; throw e; }
     return j;
   }finally{ clearTimeout(to); }
 }
-const ERR={read_only:"この合言葉では、編集できません（閲覧専用の合言葉です）。",bad_key:"合言葉が違います。",key_not_set:"スプレッドシート側の KEY が初期値のままです。",bad_request:"読み込みの要求が正しくありません。",server_error:"スプレッドシート側でエラーが起きました。"};
+async function api(action,creds,extra){
+  const c=creds||CFG;
+  let j=await post(c.url,c.key,action,extra);
+  if(j&&!j.ok&&j.error==="bad_key"&&c.key){   // 古い合言葉が残っていて、スプレッドシート側が版4（合言葉なし）になっていた：合言葉なしでやり直す（断られた要求は、何も書き込まれていない）
+    j=await post(c.url,"",action,extra);
+    if(j&&j.ok){ c.key=""; if(c===CFG) lsSet(CFG_KEY,CFG); }
+  }
+  return j;
+}
+const ERR={read_only:"このリンクでは、まだ編集できません。スプレッドシート側の Apps Script を、最新のコード（版4）に更新してください。",bad_key:"スプレッドシート側のコードが古いため、読み込めません。Apps Script を最新のコード（版4）に更新してください（共有リンクをもらった人は、共有した人に伝えてください）。",key_not_set:"スプレッドシート側の KEY が初期値のままです。",bad_request:"読み込みの要求が正しくありません。",server_error:"スプレッドシート側でエラーが起きました。"};
 const errText=(j)=>ERR[j.error]||("読み込めませんでした："+(j.message||j.error));
 function netErr(e){
   if(e&&e.code==="not_json") return "応答を読めませんでした。URLの間違い、または Apps Script の公開範囲（アクセスできるユーザー＝全員）を確認してください。";
@@ -286,7 +294,7 @@ function renderBanner(){
   if(view.loading) b.innerHTML=`<div class="banner" style="background:var(--accent-bg);color:var(--accent)">最新のデータを読み込んでいます…</div>`;
   else if(view.ok) b.innerHTML=`<div class="banner ok">${esc(view.ok)}</div>`;
   else if(view.err) b.innerHTML=`<div class="banner err">最新を取得できませんでした：${esc(view.err)}${DATA?`<br>保存してある ${esc(fmt(DATA.fetchedAt))} 時点のデータを表示しています。`:""}</div>`;
-  else if(DATA&&(DATA.role==="owner"||DATA.role==="editor")&&(DATA.ver||1)<3) b.innerHTML=`<div class="banner">この合言葉では編集できる設定ですが、スプレッドシート側のコードが古いため、今は読み取りだけです。編集するには、Apps Script を最新のコード（版3）に更新してください。</div>`;
+  else if(DATA&&(DATA.role==="owner"||DATA.role==="editor")&&(DATA.ver||1)<3) b.innerHTML=`<div class="banner">スプレッドシート側のコードが古いため、今は読み取りだけです。編集するには、Apps Script を最新のコード（版4）に更新してください。</div>`;
   else b.innerHTML="";
 }
 function renderRole(){
@@ -295,7 +303,7 @@ function renderRole(){
   $("foot").textContent=ed?"このページでは、編集と出庫・入庫ができます（機器の削除・新規登録・設定の変更は、在庫管理アプリで行います）。":"このページは閲覧専用です。登録・編集は、在庫管理アプリで行います。";
 }
 function renderAll(){
-  const configured=!!(CFG.url&&CFG.key);
+  const configured=!!CFG.url;
   $("setup").hidden=configured; $("main").hidden=!configured;
   if(!configured){ $("meta").textContent=""; return; }
   renderBanner();
@@ -353,7 +361,7 @@ function rowHtml(i){
   return `<div class="lrow${on?" sel":""}"><span class="c-tag tag">${tag}</span><span class="c-model">${esc(i.model)}</span><span class="c-st">${badge(i.status)}</span><span class="c-loc">${esc(i.loc)}</span><span class="c-shelf">${esc(i.shelf)}</span><span class="c-memo">${esc(i.memo)}</span><span class="c-upd">${esc(fmt(i.updated))}${ed?`<button class="sm" data-edit="${esc(i.tag)}">✏ 編集</button>`:""}</span></div>`;
 }
 
-/* ---------- 編集・出庫・入庫（書き込みできる合言葉のとき） ---------- */
+/* ---------- 編集・出庫・入庫 ---------- */
 const sel=new Set();   // 選んだ機器のタグ
 function renderSelbar(){
   const b=$("selbar"); if(!canEdit()){ b.hidden=true; sel.clear(); return; }
@@ -462,42 +470,37 @@ $("bCsv").addEventListener("click",()=>{
 });
 
 /* 接続の設定 */
-(function(){   // 同じ端末の在庫管理アプリに、接続設定があれば、引き継げる（書き込みもできる合言葉の場合があるので、共有リンクを作るときは、画面の警告を確認する）
-  const a=lsGet("pc_inventory_sync_v1"); if(a&&URL_RE.test(String(a.url))&&String(a.key||"").length>=12){
-    $("sApp").hidden=false; $("sApp").addEventListener("click",()=>{ $("sUrl").value=a.url; $("sKey").value=a.key; $("sGo").click(); });
+(function(){   // 同じ端末の在庫管理アプリに、接続設定があれば、接続先のURLだけを引き継げる（合言葉は引き継がない）
+  const a=lsGet("pc_inventory_sync_v1"); if(a&&URL_RE.test(String(a.url))){
+    $("sApp").hidden=false; $("sApp").addEventListener("click",()=>{ $("sUrl").value=a.url; $("sGo").click(); });
   }
 })();
 $("sGo").addEventListener("click",async()=>{
-  let url=$("sUrl").value.trim(), key=$("sKey").value.trim(); const m=$("sMsg");
-  const parts=url.split(/\s+/); if(parts.length===2&&!key){ url=parts[0]; key=parts[1]; $("sUrl").value=url; $("sKey").value=key; }
+  const url=$("sUrl").value.trim().split(/\s+/)[0]||""; const m=$("sMsg"); $("sUrl").value=url;
   if(!URL_RE.test(url)){ m.textContent="URLの形が違います。https://script.google.com/macros/s/…/exec で終わるURLを入れてください。"; return; }
-  if(key.length<12){ m.textContent="合言葉は12文字以上です。"; return; }
   m.textContent="接続しています…";
   try{
-    const j=await api("pull",{url,key});
+    const j=await api("pull",{url,key:""});
     if(!j.ok){ m.textContent=errText(j); return; }
-    CFG={url,key,name:CFG.name||""}; lsSet(CFG_KEY,CFG);
+    CFG={url,key:"",name:CFG.name||""}; lsSet(CFG_KEY,CFG);
     DATA=buildData(j); lsSet(CACHE_KEY,DATA);
     view.err=""; m.textContent=""; renderAll();
   }catch(e){ m.textContent=netErr(e); }
 });
 $("bCfg").addEventListener("click",()=>{
-  if(confirm("接続設定を消して、最初の画面に戻ります（スプレッドシートのデータは消えません）。よろしいですか？")){ CFG={url:"",key:""}; DATA=null; lsDel(CFG_KEY); lsDel(CACHE_KEY); view.err=""; $("sUrl").value=""; $("sKey").value=""; renderAll(); }
+  if(confirm("接続設定を消して、最初の画面に戻ります（スプレッドシートのデータは消えません）。よろしいですか？")){ CFG={url:"",key:""}; DATA=null; lsDel(CFG_KEY); lsDel(CACHE_KEY); view.err=""; $("sUrl").value=""; renderAll(); }
 });
 
-/* 共有リンク（接続先と合言葉を、URLの「#」以降に入れる。この部分は、サーバーには送られない） */
+/* 共有リンク（接続先のURLを、ページのアドレスの「#」以降に入れる。この部分は、サーバーには送られない） */
 const b64u=(s)=>btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
 const unb64u=(s)=>atob(s.replace(/-/g,"+").replace(/_/g,"/"));
 $("bShare").addEventListener("click",async()=>{
-  $("shareUrl").value=location.origin+location.pathname+"#s="+b64u(JSON.stringify({u:CFG.url,k:CFG.key}));
+  $("shareUrl").value=location.origin+location.pathname+"#s="+b64u(JSON.stringify({u:CFG.url}));
   $("shareMsg").textContent=""; const w=$("shareWarn"); w.hidden=true; w.className="banner";
   openDlg($("shareDlg"));
   try{
-    const p=await api("ping");
-    if(p&&p.ok&&p.role==="owner"){ w.hidden=false; w.className="banner err"; w.innerHTML="いま設定している合言葉は、<b>すべてができる合言葉（KEY）</b>です。人に渡すなら、スプレッドシート側で「閲覧専用の合言葉（VIEW_KEY）」か「編集用の合言葉（EDIT_KEY）」を設定して、その合言葉で接続し直してから、リンクを作ってください。"; }
-    else if(p&&p.ok&&p.role==="editor"){ w.hidden=false; w.className="banner"; w.textContent="編集用の合言葉（EDIT_KEY）です。このリンクを開いた人は、台帳の閲覧に加えて、編集・出庫・入庫ができます（削除・新規登録・設定の変更はできません）。渡す相手に注意してください。"; }
-    else if(p&&p.ok&&p.role==="viewer"){ w.hidden=false; w.className="banner"; w.style.background="var(--ok-bg)"; w.style.color="var(--ok)"; w.textContent="閲覧専用の合言葉です。このリンクでは、台帳を読むことだけができます（書き込みはできません）。"; }
-    else if(p&&p.ok){ w.hidden=false; w.textContent="スプレッドシート側のコードが古いため、この合言葉が書き込みもできるものかを、判定できません。Apps Script を最新のコードに更新してください。"; }
+    const p=await post(CFG.url,"","ping");   // リンクを開いた人と同じ条件（合言葉なし）で開けるかを確かめる
+    if(p&&!(p.ok&&(p.ver||1)>=4)){ w.hidden=false; w.className="banner err"; w.textContent="スプレッドシート側のコードが古いため、このリンクを開いた人は、まだ台帳を読めません。先に Apps Script を最新のコード（版4）に更新してください。"; }
   }catch(e){}
 });
 $("shareCopy").addEventListener("click",async()=>{
@@ -510,11 +513,15 @@ $("shareClose").addEventListener("click",()=>$("shareDlg").close());
   const m=location.hash.match(/^#s=([A-Za-z0-9_-]+)$/); if(!m) return;
   try{
     const o=JSON.parse(unb64u(m[1]));
-    if(o&&URL_RE.test(String(o.u))&&String(o.k||"").length>=12){
-      if(!CFG.url||(CFG.url===o.u&&CFG.key===o.k)||confirm("共有リンクの接続先に切り替えますか？（今の設定は置き換わります）")){ CFG={url:o.u,key:o.k}; lsSet(CFG_KEY,CFG); DATA=null; lsDel(CACHE_KEY); }
+    if(o&&URL_RE.test(String(o.u))){
+      const k=String(o.k||"");   // 古い共有リンクには合言葉が入っている（スプレッドシート側が版3のときだけ使う）
+      if(!CFG.url||CFG.url===o.u||confirm("共有リンクの接続先に切り替えますか？（今の設定は置き換わります）")){
+        if(CFG.url!==o.u){ DATA=null; lsDel(CACHE_KEY); }
+        CFG={url:o.u,key:k.length>=12?k:"",name:CFG.name||""}; lsSet(CFG_KEY,CFG);
+      }
     }
   }catch(e){}
-  try{ history.replaceState(null,"",location.pathname+location.search); }catch(e){}   // 合言葉を、アドレス欄・履歴に残さない
+  try{ history.replaceState(null,"",location.pathname+location.search); }catch(e){}   // 接続先を、アドレス欄・履歴に残さない
 })();
 
 /* 新しい版の自動取り込み（在庫管理アプリと同じ仕組み）。BUILD は公開時に書き換える（開発中は "dev"） */
@@ -534,7 +541,7 @@ document.addEventListener("visibilitychange",()=>{ if(!document.hidden){ checkUp
 
 /* ---------- 起動 ---------- */
 renderAll(); showTab("models");
-if(CFG.url&&CFG.key) refresh();
+if(CFG.url) refresh();
 checkUpdate(true);
 </script>
 </body>
