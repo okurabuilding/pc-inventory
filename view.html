@@ -136,7 +136,7 @@ dialog::backdrop{background:rgba(0,0,0,.4)}
   <div class="card setup" id="setup" hidden>
     <h2 style="margin:0 0 4px;font-size:17px">はじめに：接続先を設定します</h2>
     <div class="muted"><b>共有リンクをもらった場合は、リンクを開くだけで設定されます</b>（合言葉は要りません）。自分で設定するときは、在庫管理アプリの「データ」タブに入れている、Apps Script の「ウェブアプリのURL」を入れます。この端末のブラウザの中にだけ保存されます。</div>
-    <label for="sUrl">接続先URL</label>
+    <label for="sUrl">接続先URL（または、もらった共有リンク）</label>
     <input type="text" id="sUrl" placeholder="https://script.google.com/macros/s/…/exec" autocapitalize="off" autocomplete="off" spellcheck="false">
     <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap"><button class="primary" id="sGo">接続して表示</button><button id="sApp" hidden>在庫管理アプリの接続設定を使う</button></div>
     <div class="muted" id="sMsg" style="margin-top:8px"></div>
@@ -215,7 +215,7 @@ dialog::backdrop{background:rgba(0,0,0,.4)}
 /* 閲覧用ページ。データはページに入れず、スプレッドシート（Apps Script）から読み込む。
    合言葉は使わない（版4〜）。Apps Script のURLを知っている人が、閲覧・編集・出庫・入庫できる（変えた項目だけを送る）。
    CFG.key は、古い共有リンク・設定に入っていた合言葉。スプレッドシート側が版3のときだけ使い、版4で断られたら、合言葉なしでやり直して消す */
-const BUILD="20261024-123752";
+const BUILD="20261024-134124";
 const STATUS=["在庫","貸出中","修理中","動作未確認","故障","廃棄"];
 const SCOL={"在庫":"var(--c-stock)","貸出中":"var(--c-loan)","修理中":"var(--c-repair)","動作未確認":"var(--c-unk)","故障":"var(--c-broken)","廃棄":"var(--c-scrap)"};
 const URL_RE=/^https:\/\/script\.google\.com\/(a\/macros\/[^/]+\/|macros\/)s\/[A-Za-z0-9_-]+\/exec$/;
@@ -477,7 +477,10 @@ $("bCsv").addEventListener("click",()=>{
   }
 })();
 $("sGo").addEventListener("click",async()=>{
-  const url=$("sUrl").value.trim().split(/\s+/)[0]||""; const m=$("sMsg"); $("sUrl").value=url;
+  let url=$("sUrl").value.trim().split(/\s+/)[0]||""; const m=$("sMsg");
+  const sh=url.match(/#s=([A-Za-z0-9_-]+)/);   // 共有リンクを貼り付けたときは、その中の接続先を使う
+  if(sh){ try{ const o=JSON.parse(unb64u(sh[1])); if(o&&URL_RE.test(String(o.u))) url=String(o.u); }catch(e){} }
+  $("sUrl").value=url;
   if(!URL_RE.test(url)){ m.textContent="URLの形が違います。https://script.google.com/macros/s/…/exec で終わるURLを入れてください。"; return; }
   m.textContent="接続しています…";
   try{

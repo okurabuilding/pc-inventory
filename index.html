@@ -989,6 +989,11 @@ function memberDataHtml(){
         <button id="syRestore">最新の台帳を読み込み直す</button>
         <button id="syOff" class="danger">参加をやめる</button>
       </div>
+      <details style="margin-top:8px"><summary class="muted">管理者から新しい共有リンクが届いたとき</summary>
+        <div class="formgrid"><label class="full">新しい共有リンク<input type="text" id="syJoin" placeholder="https://…#s=…" autocapitalize="off" autocomplete="off" spellcheck="false"></label></div>
+        <div class="toolbar" style="margin-top:8px"><button id="syJoinGo">このリンクで参加し直す</button></div>
+        <div id="syJoinMsg" class="muted"></div>
+      </details>
       <div class="muted" style="margin-top:6px">📊 <a href="view.html" style="color:var(--accent)">閲覧用ページを開く</a></div>
       <div id="syDetail" class="muted"></div>
       <div id="syMsg" class="muted"></div>
@@ -1011,8 +1016,15 @@ $("tab-data").addEventListener("click",async e=>{
 function renderData(){
   if(isMember()){ $("tab-data").innerHTML=memberDataHtml(); return; }
   $("tab-data").innerHTML=`
+    ${syncOn()?"":`<div class="syncbox">
+      <h3>👥 共有リンクで参加する</h3>
+      <div class="muted">管理者から共有リンクをもらった人は、リンクをここに貼り付けて「参加する」を押します（合言葉は要りません）。ホーム画面に追加したアプリで参加できていないときも、ここから参加できます。</div>
+      <div class="formgrid"><label class="full">共有リンク<input type="text" id="syJoin" placeholder="https://…#s=…" autocapitalize="off" autocomplete="off" spellcheck="false"></label></div>
+      <div class="toolbar" style="margin-top:8px"><button id="syJoinGo" class="primary">参加する</button></div>
+      <div id="syJoinMsg" class="muted"></div>
+    </div>`}
     <div class="syncbox">
-      <h3>☁ クラウド保存（Googleスプレッドシート）</h3>
+      <h3>☁ クラウド保存（Googleスプレッドシート・管理者用）</h3>
       <div class="muted">変更のたびに、あなたのスプレッドシートへ台帳を自動で送ります。端末のデータが消えても、「復元」で戻せます。URLと合言葉は、この端末の中にだけ保存されます。</div>
       <div class="formgrid">
         <label class="full">接続先URL（Apps Scriptの「ウェブアプリ」のURL）<input type="text" id="syUrl" value="${esc(SY.url)}" placeholder="https://script.google.com/macros/s/…/exec" autocapitalize="off" autocomplete="off" spellcheck="false"></label>
@@ -1322,7 +1334,7 @@ async function restoreNow(joining){   // joining：共有リンクで参加す�
 }
 
 function syncState(){
-  if(!syncOn()) return {cls:"",t:"☁ クラウド保存：未設定（「データ」タブで設定）"};
+  if(!syncOn()) return {cls:"",t:"☁ 未接続（「データ」タブで、共有リンクで参加・接続の設定）"};
   if(syBusy) return {cls:"",t:"☁ 通信中…"};
   if(SY.lastErr) return {cls:"err",t:"☁ 保存できていません：タップして確認"};
   if(SY.dirty) return {cls:"",t:"☁ 送信待ち"+(navigator.onLine?"":"（オフライン）")};
@@ -1364,6 +1376,14 @@ $("tab-data").addEventListener("click",async e=>{
     msg(SY.lastErr?("⚠ "+SY.lastErr):"送信しました。");
   }
   if(id==="syRestore"){ msg("読み込んでいます…"); msg(await restoreNow()); }
+  if(id==="syJoinGo"){
+    const jm=(t)=>{ const m=$("syJoinMsg"); if(m) m.textContent=t; };
+    const u=parseShareLink($("syJoin").value);
+    if(!u){ jm("共有リンクの形が違います。管理者から届いたリンクを、「#s=」より後ろも含めて全部、そのまま貼り付けてください。"); return; }
+    if(!needJoin(u)){ jm("この端末は、すでにこの台帳に接続しています。"); return; }
+    jm(""); await joinFromLink(u);
+    return;
+  }
   if(id==="syNameSave"){ SY.name=$("syName").value.trim().slice(0,30); sySave(); msg(SY.name?`名前を「${SY.name}」にしました。これからの操作の履歴に残ります。`:"名前を空にしました（履歴には「共有メンバー」と残ります）。"); }
   if(id==="syOff" && isMember()){
     if(confirm("共有の台帳への参加をやめます。この端末に読み込んだ台帳は消えます（スプレッドシートのデータは消えません）。よろしいですか？")){
@@ -1612,19 +1632,22 @@ $("ocrFile").addEventListener("change",e=>{ const f=e.target.files[0]; e.target.
    iPhoneのホーム画面アプリは、公開した新しい版を取り込まず、古いページを使い続けることがある（保存期間は10分）。
    起動時とアプリに戻ったときに version.json を確認し、版が違えば、URLに「?v=版番号」を付けて開き直す。
    データ（端末内の保存）は、URLが変わっても消えない。BUILD は公開時に書き換える（開発中は "dev" で、確認しない） */
-const BUILD="20261024-123752";
+const BUILD="20261024-134124";
 /* ---------- 共有リンクで参加（共有メンバー） ----------
    アドレスの「#s=」に、スプレッドシートの接続先が入っている（合言葉は使わない）。
    ホーム画面に追加したときも参加できるよう、アドレスの「#s=」は消さない（参加済みなら、何もしない） */
 let joinBusy=false;
-function linkTarget(){
-  const m=location.hash.match(/^#s=([A-Za-z0-9_-]+)$/); if(!m) return "";
+function parseShareLink(s){   // 共有リンク（スマホ用・パソコン用のどちらでも）から、スプレッドシートの接続先を取り出す
+  const m=String(s||"").match(/#s=([A-Za-z0-9_-]+)/); if(!m) return "";
   try{ const o=JSON.parse(atob(m[1].replace(/-/g,"+").replace(/_/g,"/"))); return (o&&SY_URL_RE.test(String(o.u)))?String(o.u):""; }catch(e){ return ""; }
 }
-function needJoin(){ const u=linkTarget(); return !!u && !(SY.url===u && (SY.key||SY.member)); }
-async function joinFromLink(){
-  if(!needJoin()) return;
-  const u=linkTarget(), prev=Object.assign({},SY);
+function linkTarget(){ return /^#s=[A-Za-z0-9_-]+$/.test(location.hash)?parseShareLink(location.hash):""; }
+function needJoin(u){ if(u===undefined) u=linkTarget(); return !!u && !(SY.url===u && (SY.key||SY.member)); }
+/* u：「データ」タブに貼り付けたリンクの接続先（ホーム画面のアプリで、アドレスにリンクが残っていないとき用）。省略時はアドレスの「#s=」 */
+async function joinFromLink(u){
+  if(u===undefined) u=linkTarget();
+  if(!needJoin(u)) return;
+  const prev=Object.assign({},SY);
   joinBusy=true;
   try{
     const q=SY.key?"この端末は、管理者（合言葉 KEY）として接続されています。共有メンバーとして参加し直しますか？\n（この端末の KEY の設定は消えます。管理者の端末では「キャンセル」を選んでください）"
@@ -1642,7 +1665,7 @@ async function joinFromLink(){
     const name=prompt("あなたの名前を入れてください（履歴に残ります。あとで「データ」タブで変えられます）",SY.name||"");
     if(name!==null){ SY.name=String(name).trim().slice(0,30); sySave(); }
     renderAll();
-    showResult("ok",`<h3>共有の台帳に参加しました</h3><div>${S.items.length} 台を読み込みました。読み取り・登録した内容は、自動でスプレッドシートに送られます。</div><div class="muted">ホーム画面に追加して使うときは、この画面のまま、共有ボタン →「ホーム画面に追加」を選んでください。</div>`);
+    showResult("ok",`<h3>共有の台帳に参加しました</h3><div>${S.items.length} 台を読み込みました。読み取り・登録した内容は、自動でスプレッドシートに送られます。</div>${(navigator.standalone===true||matchMedia("(display-mode: standalone)").matches)?"":`<div class="muted">ホーム画面に追加して使うときは、この画面のまま、共有ボタン →「ホーム画面に追加」を選んでください。ホーム画面のアプリで参加できていないときは、その「データ」タブにリンクを貼り付けて参加できます。</div>`}`);
   }finally{ joinBusy=false; }
 }
 
