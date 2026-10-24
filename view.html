@@ -172,11 +172,12 @@ dialog::backdrop{background:rgba(0,0,0,.4)}
 <dialog id="shareDlg">
   <h3 style="margin:0 0 6px;font-size:16px" tabindex="-1" autofocus>🔗 共有リンク</h3>
   <div id="shareWarn" class="banner" hidden></div>
-  <div class="muted">このリンクを開くだけで、相手の端末に接続先が設定されます（合言葉は要りません）。<b>リンクを持っている人は、台帳の閲覧・編集・出庫・入庫ができます</b>（機器の削除・新規登録は、在庫管理アプリからだけ）。渡す相手に注意してください。共有をやめたいときは、Apps Script で新しいURLを作り直します（手順はコードの先頭に書いてあります）。</div>
-  <input type="text" id="shareUrl" readonly style="margin-top:8px">
-  <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
-    <button id="shareCopy" class="primary">コピー</button><button id="shareClose">閉じる</button>
-  </div>
+  <div class="muted">リンクを開くだけで、相手の端末に接続先が設定されます（合言葉は要りません）。<b>どちらのリンクを持っている人も、台帳の閲覧・編集・出庫・入庫・新規登録ができます</b>（機器の削除・設定の変更は、管理者のアプリからだけ）。渡す相手に注意してください。共有をやめたいときは、Apps Script で新しいURLを作り直します（手順はコードの先頭に書いてあります）。</div>
+  <label for="shareAppUrl" style="display:block;margin-top:10px;font-weight:600">スマホで読み取り・登録する人用（在庫管理アプリ）</label>
+  <div style="display:flex;gap:8px;margin-top:4px"><input type="text" id="shareAppUrl" readonly style="flex:1;min-width:0"><button id="shareAppCopy" class="primary">コピー</button></div>
+  <label for="shareUrl" style="display:block;margin-top:10px;font-weight:600">パソコンで見る・編集する人用（この閲覧用ページ）</label>
+  <div style="display:flex;gap:8px;margin-top:4px"><input type="text" id="shareUrl" readonly style="flex:1;min-width:0"><button id="shareCopy" class="primary">コピー</button></div>
+  <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px"><button id="shareClose">閉じる</button></div>
   <div class="muted" id="shareMsg"></div>
 </dialog>
 
@@ -214,7 +215,7 @@ dialog::backdrop{background:rgba(0,0,0,.4)}
 /* 閲覧用ページ。データはページに入れず、スプレッドシート（Apps Script）から読み込む。
    合言葉は使わない（版4〜）。Apps Script のURLを知っている人が、閲覧・編集・出庫・入庫できる（変えた項目だけを送る）。
    CFG.key は、古い共有リンク・設定に入っていた合言葉。スプレッドシート側が版3のときだけ使い、版4で断られたら、合言葉なしでやり直して消す */
-const BUILD="20261020-113819";
+const BUILD="20261024-123752";
 const STATUS=["在庫","貸出中","修理中","動作未確認","故障","廃棄"];
 const SCOL={"在庫":"var(--c-stock)","貸出中":"var(--c-loan)","修理中":"var(--c-repair)","動作未確認":"var(--c-unk)","故障":"var(--c-broken)","廃棄":"var(--c-scrap)"};
 const URL_RE=/^https:\/\/script\.google\.com\/(a\/macros\/[^/]+\/|macros\/)s\/[A-Za-z0-9_-]+\/exec$/;
@@ -254,7 +255,7 @@ async function api(action,creds,extra){
   }
   return j;
 }
-const ERR={read_only:"このリンクでは、まだ編集できません。スプレッドシート側の Apps Script を、最新のコード（版4）に更新してください。",bad_key:"スプレッドシート側のコードが古いため、読み込めません。Apps Script を最新のコード（版4）に更新してください（共有リンクをもらった人は、共有した人に伝えてください）。",key_not_set:"スプレッドシート側の KEY が初期値のままです。",bad_request:"読み込みの要求が正しくありません。",server_error:"スプレッドシート側でエラーが起きました。"};
+const ERR={read_only:"このリンクでは、まだ編集できません。スプレッドシート側の Apps Script を、最新のコード（版5）に更新してください。",bad_key:"スプレッドシート側のコードが古いため、読み込めません。Apps Script を最新のコード（版5）に更新してください（共有リンクをもらった人は、共有した人に伝えてください）。",key_not_set:"スプレッドシート側の KEY が初期値のままです。",bad_request:"読み込みの要求が正しくありません。",server_error:"スプレッドシート側でエラーが起きました。"};
 const errText=(j)=>ERR[j.error]||("読み込めませんでした："+(j.message||j.error));
 function netErr(e){
   if(e&&e.code==="not_json") return "応答を読めませんでした。URLの間違い、または Apps Script の公開範囲（アクセスできるユーザー＝全員）を確認してください。";
@@ -294,13 +295,13 @@ function renderBanner(){
   if(view.loading) b.innerHTML=`<div class="banner" style="background:var(--accent-bg);color:var(--accent)">最新のデータを読み込んでいます…</div>`;
   else if(view.ok) b.innerHTML=`<div class="banner ok">${esc(view.ok)}</div>`;
   else if(view.err) b.innerHTML=`<div class="banner err">最新を取得できませんでした：${esc(view.err)}${DATA?`<br>保存してある ${esc(fmt(DATA.fetchedAt))} 時点のデータを表示しています。`:""}</div>`;
-  else if(DATA&&(DATA.role==="owner"||DATA.role==="editor")&&(DATA.ver||1)<3) b.innerHTML=`<div class="banner">スプレッドシート側のコードが古いため、今は読み取りだけです。編集するには、Apps Script を最新のコード（版4）に更新してください。</div>`;
+  else if(DATA&&(DATA.role==="owner"||DATA.role==="editor")&&(DATA.ver||1)<3) b.innerHTML=`<div class="banner">スプレッドシート側のコードが古いため、今は読み取りだけです。編集するには、Apps Script を最新のコード（版5）に更新してください。</div>`;
   else b.innerHTML="";
 }
 function renderRole(){
   const ed=canEdit();
   $("modeLabel").textContent=ed?"閲覧・編集用":"閲覧用（読み取り専用）";
-  $("foot").textContent=ed?"このページでは、編集と出庫・入庫ができます（機器の削除・新規登録・設定の変更は、在庫管理アプリで行います）。":"このページは閲覧専用です。登録・編集は、在庫管理アプリで行います。";
+  $("foot").textContent=ed?"このページでは、編集と出庫・入庫ができます（新規登録は、スマホの在庫管理アプリで行います。機器の削除・設定の変更は、管理者のアプリで行います）。":"このページは閲覧専用です。登録・編集は、在庫管理アプリで行います。";
 }
 function renderAll(){
   const configured=!!CFG.url;
@@ -495,19 +496,24 @@ $("bCfg").addEventListener("click",()=>{
 const b64u=(s)=>btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
 const unb64u=(s)=>atob(s.replace(/-/g,"+").replace(/_/g,"/"));
 $("bShare").addEventListener("click",async()=>{
-  $("shareUrl").value=location.origin+location.pathname+"#s="+b64u(JSON.stringify({u:CFG.url}));
+  const s="#s="+b64u(JSON.stringify({u:CFG.url}));
+  $("shareUrl").value=location.origin+location.pathname+s;
+  $("shareAppUrl").value=new URL("./",location.href).href+s;   // 同じ場所の在庫管理アプリ（index.html）
   $("shareMsg").textContent=""; const w=$("shareWarn"); w.hidden=true; w.className="banner";
   openDlg($("shareDlg"));
   try{
     const p=await post(CFG.url,"","ping");   // リンクを開いた人と同じ条件（合言葉なし）で開けるかを確かめる
-    if(p&&!(p.ok&&(p.ver||1)>=4)){ w.hidden=false; w.className="banner err"; w.textContent="スプレッドシート側のコードが古いため、このリンクを開いた人は、まだ台帳を読めません。先に Apps Script を最新のコード（版4）に更新してください。"; }
+    if(p&&!(p.ok&&(p.ver||1)>=4)){ w.hidden=false; w.className="banner err"; w.textContent="スプレッドシート側のコードが古いため、どちらのリンクも、まだ使えません。先に Apps Script を最新のコード（版5）に更新してください。"; }
+    else if(p&&p.ok&&(p.ver||1)<5){ w.hidden=false; w.className="banner"; w.textContent="スマホ用のリンク（新規登録）は、Apps Script を最新のコード（版5）に更新するまで使えません（パソコン用のリンクは使えます）。"; }
   }catch(e){}
 });
-$("shareCopy").addEventListener("click",async()=>{
-  const t=$("shareUrl"); t.select();
-  try{ await navigator.clipboard.writeText(t.value); $("shareMsg").textContent="コピーしました。"; }
-  catch(e){ try{ document.execCommand("copy"); $("shareMsg").textContent="コピーしました。"; }catch(_){ $("shareMsg").textContent="自動でコピーできませんでした。選択した文字を、手でコピーしてください。"; } }
-});
+async function copyField(id,label){
+  const t=$(id); t.select();
+  try{ await navigator.clipboard.writeText(t.value); $("shareMsg").textContent=label+"をコピーしました。"; }
+  catch(e){ try{ document.execCommand("copy"); $("shareMsg").textContent=label+"をコピーしました。"; }catch(_){ $("shareMsg").textContent="自動でコピーできませんでした。選択した文字を、手でコピーしてください。"; } }
+}
+$("shareAppCopy").addEventListener("click",()=>copyField("shareAppUrl","スマホ用のリンク"));
+$("shareCopy").addEventListener("click",()=>copyField("shareUrl","パソコン用のリンク"));
 $("shareClose").addEventListener("click",()=>$("shareDlg").close());
 (function importFromHash(){
   const m=location.hash.match(/^#s=([A-Za-z0-9_-]+)$/); if(!m) return;

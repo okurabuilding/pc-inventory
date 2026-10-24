@@ -288,7 +288,7 @@ function save(){ try{ localStorage.setItem(KEY, JSON.stringify(S)); }catch(e){} 
 
 /* クラウド保存の設定（URL・合言葉）は、データとは別にこの端末の中にだけ保存する。プログラムには書かない */
 const SYNC_KEY = "pc_inventory_sync_v1";
-let SY = {url:"", key:"", dirty:false, lastOk:null, lastErr:""};
+let SY = {url:"", key:"", member:false, name:"", dirty:false, lastOk:null, lastErr:""};   // member：共有リンクで参加した端末（合言葉なし）
 try{ const x=JSON.parse(localStorage.getItem(SYNC_KEY)); if(x && typeof x==="object") SY=Object.assign(SY,x); }catch(e){}
 function sySave(){ try{ localStorage.setItem(SYNC_KEY, JSON.stringify(SY)); }catch(e){} }
 
@@ -303,7 +303,10 @@ function fmt(iso){
 }
 const normTag = (s)=>String(s||"").toUpperCase().replace(/[^A-Z0-9]/g,"");
 const find = (tag)=>S.items.find(i=>i.tag===tag);
-function addLog(tag,act,note=""){ S.log.unshift({t:nowIso(),tag,act,note}); if(S.log.length>500) S.log.length=500; }
+function addLog(tag,act,note=""){
+  if(SY.member&&!SY.key) note+=`（${SY.name||"共有メンバー"}）`;   // 共有メンバーの操作は、誰がしたかを残す
+  S.log.unshift({t:nowIso(),tag,act,note}); if(S.log.length>500) S.log.length=500;
+}
 function badge(st){ return `<span class="badge b-${st}">${st}</span>`; }
 let audioCtx=null;
 function beep(ok){
@@ -418,6 +421,7 @@ document.addEventListener("keydown",e=>{
 const addDeclined=new Set();
 function offerAddToList(listKey,value){
   value=String(value||"").trim().slice(0,60); if(!value) return;
+  if(isMember()) return;   // 共有メンバーの端末では聞かない（項目は、管理者が設定して配る）
   if((S.lists[listKey]||[]).includes(value)) return;
   const k=listKey+"|"+value; if(addDeclined.has(k)) return;
   const label=listKey==="loc"?"保管場所／使用者":(listKey==="shelf"?"棚番":"メモ");
@@ -539,7 +543,10 @@ function setMode(m){
   $("moveOpts").hidden = m!=="move"; moveDone=new Set(); lastMove=null;
   $("modeHint").textContent = HINTS[m];
   $("result").innerHTML="";
-  if(m==="stocktake" && !S.stocktakeStart){ startStocktake(false); }
+  if(m==="stocktake" && !S.stocktakeStart){
+    if(isMember()) showResult("warn","<h3>棚卸はまだ開始されていません</h3><div>棚卸は、管理者が開始します。開始されると、読み取った機器が「確認済み」になります。</div>");
+    else startStocktake(false);
+  }
   focusScan();
 }
 $("modes").addEventListener("change",e=>{ if(e.target.name==="mode") setMode(e.target.value); });
@@ -853,7 +860,7 @@ function renderModels(){
     return `<tr class="model-row" data-model="${esc(m)}">
       <td><b>${open?"▼":"▶"} ${esc(m)}</b> ${low?`<span class="badge b-low">在庫不足</span>`:""}</td>
       <td class="num">${held}</td><td class="num">${c["在庫"]}</td><td class="num">${c["貸出中"]}</td><td class="num">${c["修理中"]}</td><td class="num">${c["動作未確認"]}</td><td class="num">${c["故障"]}</td><td class="num">${c["廃棄"]}</td>
-      <td class="num"><input class="min-input" type="number" min="0" value="${min}" data-min="${esc(m)}" title="在庫がこの数を下回ると「在庫不足」と表示"></td>
+      <td class="num"><input class="min-input" type="number" min="0" value="${min}" data-min="${esc(m)}" title="在庫がこの数を下回ると「在庫不足」と表示"${isMember()?" disabled":""}></td>
       <td><div class="bar">${bar}</div></td></tr>${chips}`;
   }).join("");
   $("tab-models").innerHTML=`<div class="tablewrap"><table>
@@ -884,7 +891,7 @@ function renderLedger(){
   const rows=list.map(i=>`<tr>
     <td class="tag">${esc(i.tag)}</td><td>${esc(i.model)}</td>
     <td>${badge(i.status)}</td><td>${esc(i.loc||"")}</td><td>${esc(i.shelf||"")}</td><td>${esc(i.memo||"")}</td><td class="muted">${fmt(i.updated)}</td>
-    <td style="white-space:nowrap"><button class="sm" data-edit="${esc(i.tag)}">編集</button> <button class="sm danger" data-del="${esc(i.tag)}">削除</button></td></tr>`).join("");
+    <td style="white-space:nowrap"><button class="sm" data-edit="${esc(i.tag)}">編集</button>${isMember()?"":` <button class="sm danger" data-del="${esc(i.tag)}">削除</button>`}</td></tr>`).join("");
   const keepFocus = document.activeElement && document.activeElement.id==="fQ";
   $("tab-ledger").innerHTML=`<div class="filters">
     <input type="search" id="fQ" placeholder="サービスタグ・機種・場所で検索" value="${esc(ledgerQ)}">
@@ -913,7 +920,8 @@ $("tab-ledger").addEventListener("click",e=>{
 function renderStocktake(){
   const target=S.items.filter(i=>i.status!=="廃棄");
   if(!S.stocktakeStart){
-    $("tab-stocktake").innerHTML=`<p>棚卸はまだ開始していません。上の「棚卸」モードに切り替えるか、下のボタンで開始します。</p><button class="primary" id="stStart">棚卸を開始</button>`;
+    $("tab-stocktake").innerHTML=isMember()?`<p>棚卸はまだ開始されていません。管理者が開始すると、ここに未確認の一覧が出ます。</p>`
+      :`<p>棚卸はまだ開始していません。上の「棚卸」モードに切り替えるか、下のボタンで開始します。</p><button class="primary" id="stStart">棚卸を開始</button>`;
     return;
   }
   const done=target.filter(isChecked).length;
@@ -921,7 +929,7 @@ function renderStocktake(){
   const rest=target.filter(i=>!isChecked(i)).sort((a,b)=>a.model.localeCompare(b.model)||a.tag.localeCompare(b.tag));
   $("tab-stocktake").innerHTML=`
     <div class="toolbar"><b>開始 ${fmt(S.stocktakeStart)}</b><span class="muted">対象は廃棄を除く ${target.length} 台</span>
-      <span style="flex:1"></span><button id="stStart">やり直す</button></div>
+      <span style="flex:1"></span>${isMember()?"":`<button id="stStart">やり直す</button>`}</div>
     <div><b>${done} / ${target.length} 台確認済み（${pct}%）</b></div>
     <div class="progress"><i style="width:${pct}%"></i></div>
     <h3 style="font-size:15px;margin:12px 0 4px">未確認 ${rest.length} 台</h3>
@@ -945,8 +953,63 @@ $("tab-log").addEventListener("click",e=>{
   e.preventDefault(); openEdit(t.dataset.logedit);
 });
 
+/* ---------- ほかの人と使う（共有リンク・共有メンバー） ----------
+   共有リンクには、スプレッドシートの接続先だけが入る（合言葉は入れない）。
+   リンクを持っている人は、閲覧・編集・出庫入庫・新規登録ができる。削除・設定は、合言葉（KEY）を入れた管理者のアプリだけ */
+function shareLinks(){
+  const s="#s="+btoa(JSON.stringify({u:SY.url})).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+  const dir=location.origin+location.pathname.replace(/[^/]*$/,"");
+  return {app:dir+s, view:dir+"view.html"+s};
+}
+function shareBoxHtml(){
+  if(!syncOn()||isMember()) return "";
+  const L=shareLinks(), old=(SY.ver||1)<5;
+  return `<div class="syncbox">
+      <h3>👥 ほかの人と使う（共有リンク）</h3>
+      <div class="muted">リンクを送るだけで、合言葉なしで使えます。<b>どちらのリンクを持っている人も、閲覧・編集・出庫入庫・新規登録ができます</b>（機器の削除・プルダウンの項目・最低在庫・棚卸の開始は、このアプリ（管理者）からだけ）。渡す相手に注意してください。</div>
+      ${old?`<div class="muted" style="color:var(--ng)">⚠ スプレッドシート側のコードが古いため、まだ使えません。Apps Script を最新のコード（版5）に更新してから、上の「今すぐ同期」を押してください。</div>`:""}
+      <div class="formgrid">
+        <label class="full">スマホで読み取り・登録する人用（このアプリ）<input type="text" id="shApp" readonly value="${esc(L.app)}"></label>
+        <label class="full">パソコンで見る・編集する人用（閲覧用ページ）<input type="text" id="shView" readonly value="${esc(L.view)}"></label>
+      </div>
+      <div class="toolbar" style="margin-top:8px"><button id="shAppCopy" class="primary">スマホ用をコピー</button><button id="shViewCopy">パソコン用をコピー</button></div>
+      <div class="muted">共有をやめたいときは、Apps Script で新しいURLを作り直します（手順はコードの先頭に書いてあります）。</div>
+      <div id="shMsg" class="muted"></div>
+    </div>`;
+}
+function memberDataHtml(){
+  const L=S.lists;
+  return `<div class="syncbox">
+      <h3>👥 共有の台帳に参加中</h3>
+      <div class="muted">この端末は、共有リンクで参加しています（合言葉は使いません）。<b>登録・編集・出庫入庫・棚卸の読み取り</b>ができ、内容は自動でスプレッドシートに送られます。機器の削除・プルダウンの項目・最低在庫・棚卸の開始は、管理者が行います。</div>
+      <div class="formgrid"><label class="full">あなたの名前（履歴に残ります）<input type="text" id="syName" value="${esc(SY.name||"")}" maxlength="30" autocomplete="off" placeholder="例：8F 田中"></label></div>
+      <div class="toolbar" style="margin-top:8px">
+        <button id="syNameSave">名前を保存</button>
+        <button id="syPush" class="primary">今すぐ同期</button>
+        <button id="syRestore">最新の台帳を読み込み直す</button>
+        <button id="syOff" class="danger">参加をやめる</button>
+      </div>
+      <div class="muted" style="margin-top:6px">📊 <a href="view.html" style="color:var(--accent)">閲覧用ページを開く</a></div>
+      <div id="syDetail" class="muted"></div>
+      <div id="syMsg" class="muted"></div>
+    </div>
+    <div class="syncbox">
+      <h3>▼ プルダウンの項目</h3>
+      <div class="muted">管理者が設定した項目が、自動で配られます（保管場所 ${L.loc.length}・棚番 ${(L.shelf||[]).length}・メモ ${L.memo.length}・機種 ${L.model.length} 項目）。一覧にないものは、そのまま入力できます。</div>
+    </div>
+    <div class="toolbar"><button id="csvOut">台帳をCSVで書き出し（Excelで開けます）</button></div>
+    <div id="dataMsg" class="muted"></div>`;
+}
+$("tab-data").addEventListener("click",async e=>{
+  const id=e.target.id; if(id!=="shAppCopy"&&id!=="shViewCopy") return;
+  const t=$(id==="shAppCopy"?"shApp":"shView"), m=$("shMsg"); t.select();
+  try{ await navigator.clipboard.writeText(t.value); m.textContent="コピーしました。メールやチャットに貼り付けて送ってください。"; }
+  catch(_){ try{ document.execCommand("copy"); m.textContent="コピーしました。"; }catch(__){ m.textContent="自動でコピーできませんでした。リンクの文字を長押しして、コピーしてください。"; } }
+});
+
 /* ---------- データ（CSV） ---------- */
 function renderData(){
+  if(isMember()){ $("tab-data").innerHTML=memberDataHtml(); return; }
   $("tab-data").innerHTML=`
     <div class="syncbox">
       <h3>☁ クラウド保存（Googleスプレッドシート）</h3>
@@ -961,10 +1024,11 @@ function renderData(){
         <button id="syRestore">スプレッドシートから復元</button>
         <button id="syOff" class="danger">連携を解除</button>
       </div>
-      <div class="muted" style="margin-top:6px">📊 <a href="view.html" style="color:var(--accent)">閲覧用ページを開く</a>（PC・スマホで台帳を見られて、編集・出庫・入庫もできます。他の人には、閲覧用ページの「🔗 共有リンク」を送ってください。合言葉は要りません）</div>
+      <div class="muted" style="margin-top:6px">📊 <a href="view.html" style="color:var(--accent)">閲覧用ページを開く</a>（PC・スマホで台帳を見られて、編集・出庫・入庫もできます。ほかの人に渡すリンクは、下の「ほかの人と使う」にあります）</div>
       <div id="syDetail" class="muted"></div>
       <div id="syMsg" class="muted"></div>
     </div>
+    ${shareBoxHtml()}
     <div class="syncbox">
       <h3>▼ プルダウンの項目を設定</h3>
       <div class="muted">1行に1項目で書いて「保存」を押すと、登録・編集・まとめて入荷のプルダウンに反映されます。一覧にないものは、いつでもそのまま入力できます。入力欄をタップすると候補が出て、文字を入れると絞り込まれます。</div>
@@ -1090,9 +1154,11 @@ const SY_ERR={
   key_not_set:"Apps Script側の KEY が初期値のままです（12文字以上に書き換えて、新しいバージョンでデプロイし直してください）。",
   empty_overwrite:"台帳が空のデータで上書きされるのを、サーバー側で止めました。",
   bad_request:"送った内容をサーバーが理解できませんでした。",
-  server_error:"サーバー側でエラーが起きました。"
+  server_error:"サーバー側でエラーが起きました。",
+  need_v5:"スプレッドシート側のコードが古いため、共有メンバーの登録を保存できません（この端末には残っています）。管理者に、Apps Script を最新のコード（版5）に更新してもらってください。"
 };
-const syncOn=()=>!!(SY.url&&SY.key);
+function syncOn(){ return !!(SY.url&&(SY.key||SY.member)); }
+function isMember(){ return !!(SY.url&&SY.member&&!SY.key); }   // 共有リンクで参加した端末（合言葉なし）
 let syTimer=null, syBusy=false;
 
 function markDirty(){
@@ -1110,7 +1176,7 @@ async function api(action,extra,creds){
   const c=creds||SY, ctl=new AbortController(), to=setTimeout(()=>ctl.abort(),25000);
   try{
     const res=await fetch(c.url,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},
-      body:JSON.stringify(Object.assign({key:c.key,action},extra||{})),signal:ctl.signal,redirect:"follow",credentials:"omit",cache:"no-store"});
+      body:JSON.stringify(Object.assign(c.key?{key:c.key}:{},{action},extra||{})),signal:ctl.signal,redirect:"follow",credentials:"omit",cache:"no-store"});
     const text=await res.text(); let j;
     try{ j=JSON.parse(text); }catch(_){ const err=new Error("not_json"); err.code="not_json"; throw err; }
     return j;
@@ -1166,16 +1232,28 @@ async function syncV3(force){
     const local=new Set(S.items.map(i=>i.tag)); S.base=baseOf(cleanList(p.items).filter(i=>local.has(i.tag))); persistLocal();
   }
   const sent=JSON.parse(JSON.stringify(S.items)), d=diffItems(S.base,sent);
-  const j=await api("sync",{data:{patches:d.patches,deletes:d.deletes,force:!!force,log:S.log.slice(0,200),
-    settings:{minStock:S.minStock||{},lists:S.lists,stocktakeStart:S.stocktakeStart||""}}});
+  const mem=isMember(), data={patches:d.patches,deletes:mem?[]:d.deletes,force:!!force,log:S.log.slice(0,200)};
+  if(!mem) data.settings={minStock:S.minStock||{},lists:S.lists,stocktakeStart:S.stocktakeStart||""};   // 設定は、管理者だけが送る
+  const j=await api("sync",{data});
   if(!j.ok) return j;
-  const before=JSON.stringify([S.items,S.log]);
+  // 古いコードは、共有メンバーの新規登録を捨てる。受け取った台帳で置き換えると、この端末の登録まで消えるため、置き換えない
+  if(mem && (j.ver||1)<5) return {ok:false,error:"need_v5"};
+  const snap=()=>JSON.stringify([S.items,S.log,S.lists,S.minStock,S.stocktakeStart]);
+  const before=snap();
   const server=cleanList(j.items), during=diffItems(baseOf(sent),S.items);
   S.base=baseOf(server); S.items=applyDiff(server,during);   // 基準は、重ねる前の、スプレッドシートの台帳
   if(Array.isArray(j.log)) S.log=mergeLogs(S.log,j.log);
+  if(mem) applySharedSettings(j);
   persistLocal();
   if(during.patches.length||during.deletes.length) SY.dirty=true;   // 通信中に変えた分は、次の同期で送る
-  return Object.assign({},j,{changed:before!==JSON.stringify([S.items,S.log])});
+  return Object.assign({},j,{changed:before!==snap()});
+}
+
+/* 共有メンバー：プルダウンの項目・最低在庫・棚卸の開始日時は、管理者の設定を使う */
+function applySharedSettings(j){
+  if(j.lists&&typeof j.lists==="object") S.lists=normLists(j.lists);
+  if(j.minStock&&typeof j.minStock==="object"){ const m={}; Object.keys(j.minStock).forEach(k=>{ const n=parseInt(j.minStock[k],10); if(n>0) m[k]=n; }); S.minStock=m; }
+  if(typeof j.stocktakeStart==="string") S.stocktakeStart=j.stocktakeStart||null;
 }
 
 async function pushNow(manual,force){
@@ -1217,7 +1295,7 @@ function cleanItem(x){
   const ts=(v)=>{ const s=String(v??"").trim(); return s&&!isNaN(new Date(s))?new Date(s).toISOString():""; };
   return {tag,model,status:st,loc:String(x.loc??"").trim(),shelf:String(x.shelf??"").trim(),memo:String(x.memo??"").trim(),updated:ts(x.updated)||nowIso(),checked:ts(x.checked)||null};
 }
-async function restoreNow(){
+async function restoreNow(joining){   // joining：共有リンクで参加するとき（確認なし・空の台帳でもよい）
   if(!syncOn()) return "先に接続先URLと合言葉を設定してください。";
   syBusy=true; renderSync();
   let j;
@@ -1231,8 +1309,8 @@ async function restoreNow(){
     items.forEach(it=>{ if(!it.shelf&&ls.get(it.tag)) it.shelf=ls.get(it.tag); });
   }
   SY.ver=j.ver||1; sySave();
-  if(!items.length){ renderSync(); return "スプレッドシートに台帳データがありません（復元できるものがありません）。"; }
-  if(!confirm(`この端末のデータ（${S.items.length}台）を、スプレッドシートの内容（${items.length}台）で置き換えます。よろしいですか？`)){ renderSync(); return "復元をキャンセルしました。"; }
+  if(!items.length && !joining){ renderSync(); return "スプレッドシートに台帳データがありません（復元できるものがありません）。"; }
+  if(!joining && !confirm(`この端末のデータ（${S.items.length}台）を、スプレッドシートの内容（${items.length}台）で置き換えます。よろしいですか？`)){ renderSync(); return "復元をキャンセルしました。"; }
   const log=(Array.isArray(j.log)?j.log:[]).slice(0,200).map(l=>({t:String(l.t||""),tag:String(l.tag||""),act:String(l.act||""),note:String(l.note||"")}));
   let minStock={}; if(j.minStock&&typeof j.minStock==="object") Object.keys(j.minStock).forEach(k=>{ const n=parseInt(j.minStock[k],10); if(n>0) minStock[k]=n; });
   // 古いApps Scriptは lists を返さない → その場合はこの端末の項目を残す
@@ -1248,14 +1326,14 @@ function syncState(){
   if(syBusy) return {cls:"",t:"☁ 通信中…"};
   if(SY.lastErr) return {cls:"err",t:"☁ 保存できていません：タップして確認"};
   if(SY.dirty) return {cls:"",t:"☁ 送信待ち"+(navigator.onLine?"":"（オフライン）")};
-  return {cls:"ok",t:(v3()?"☁ 同期済み ":"☁ 保存済み ")+fmt(SY.lastOk)};
+  return {cls:"ok",t:(isMember()?"👥 共有中・同期済み ":(v3()?"☁ 同期済み ":"☁ 保存済み "))+fmt(SY.lastOk)};
 }
 function renderSync(){
   const s=syncState(), bar=$("syncBar");
   bar.className="syncbar "+s.cls; bar.textContent=s.t;
   const d=$("syDetail");
   const shelfWarn=(syncOn()&&SY.ver&&SY.ver<2&&S.items.some(i=>i.shelf))?"　⚠ 棚番をクラウドに保存するには、スプレッドシート側のコードの更新が必要です（今は、この端末にだけ保存されています）。":"";
-  const viewWarn=(syncOn()&&SY.ver&&SY.ver<4)?"　ℹ 閲覧用ページを合言葉なしで共有するには、スプレッドシート側のコードを最新（版4）に更新してください。":"";
+  const viewWarn=(syncOn()&&!isMember()&&SY.ver&&SY.ver<5)?"　ℹ ほかの人と使う（共有リンク）には、スプレッドシート側のコードを最新（版5）に更新してください。":"";
   if(d) d.textContent=!syncOn()?"":(SY.lastErr?"⚠ "+SY.lastErr:(SY.lastOk?"最後に保存できた時刻："+fmt(SY.lastOk):"まだ1回も送信していません。"))+shelfWarn+viewWarn;
 }
 $("syncBar").addEventListener("click",()=>showTab("data"));
@@ -1286,6 +1364,14 @@ $("tab-data").addEventListener("click",async e=>{
     msg(SY.lastErr?("⚠ "+SY.lastErr):"送信しました。");
   }
   if(id==="syRestore"){ msg("読み込んでいます…"); msg(await restoreNow()); }
+  if(id==="syNameSave"){ SY.name=$("syName").value.trim().slice(0,30); sySave(); msg(SY.name?`名前を「${SY.name}」にしました。これからの操作の履歴に残ります。`:"名前を空にしました（履歴には「共有メンバー」と残ります）。"); }
+  if(id==="syOff" && isMember()){
+    if(confirm("共有の台帳への参加をやめます。この端末に読み込んだ台帳は消えます（スプレッドシートのデータは消えません）。よろしいですか？")){
+      SY={url:"",key:"",member:false,name:SY.name||"",dirty:false,lastOk:null,lastErr:""}; sySave(); clearTimeout(syTimer);
+      S={items:[],log:[],minStock:{},stocktakeStart:null,lists:defaultLists()}; persistLocal(); renderAll(); renderSync(); $("result").innerHTML="";
+    }
+    return;
+  }
   if(id==="syOff"){
     if(confirm("クラウド保存の連携を解除します（スプレッドシート上のデータは消えません）。よろしいですか？")){
       SY={url:"",key:"",dirty:false,lastOk:null,lastErr:""}; sySave(); clearTimeout(syTimer); renderAll(); renderSync();
@@ -1526,7 +1612,40 @@ $("ocrFile").addEventListener("change",e=>{ const f=e.target.files[0]; e.target.
    iPhoneのホーム画面アプリは、公開した新しい版を取り込まず、古いページを使い続けることがある（保存期間は10分）。
    起動時とアプリに戻ったときに version.json を確認し、版が違えば、URLに「?v=版番号」を付けて開き直す。
    データ（端末内の保存）は、URLが変わっても消えない。BUILD は公開時に書き換える（開発中は "dev" で、確認しない） */
-const BUILD="20261020-113819";
+const BUILD="20261024-123752";
+/* ---------- 共有リンクで参加（共有メンバー） ----------
+   アドレスの「#s=」に、スプレッドシートの接続先が入っている（合言葉は使わない）。
+   ホーム画面に追加したときも参加できるよう、アドレスの「#s=」は消さない（参加済みなら、何もしない） */
+let joinBusy=false;
+function linkTarget(){
+  const m=location.hash.match(/^#s=([A-Za-z0-9_-]+)$/); if(!m) return "";
+  try{ const o=JSON.parse(atob(m[1].replace(/-/g,"+").replace(/_/g,"/"))); return (o&&SY_URL_RE.test(String(o.u)))?String(o.u):""; }catch(e){ return ""; }
+}
+function needJoin(){ const u=linkTarget(); return !!u && !(SY.url===u && (SY.key||SY.member)); }
+async function joinFromLink(){
+  if(!needJoin()) return;
+  const u=linkTarget(), prev=Object.assign({},SY);
+  joinBusy=true;
+  try{
+    const q=SY.key?"この端末は、管理者（合言葉 KEY）として接続されています。共有メンバーとして参加し直しますか？\n（この端末の KEY の設定は消えます。管理者の端末では「キャンセル」を選んでください）"
+      :"共有の在庫台帳に参加しますか？\n（登録・編集・出庫入庫・棚卸の読み取りができます。内容はスプレッドシートに送られます）";
+    if(!confirm(q)) return;
+    showResult("","<h3>共有の台帳に接続しています…</h3>");
+    let p;
+    try{ p=await api("ping",{},{url:u,key:""}); }catch(e){ showResult("ng",`<h3>接続できませんでした</h3><div>${esc(netErr(e))}</div>`); return; }
+    if(!p.ok || (p.ver||1)<5){ showResult("ng","<h3>まだ参加できません</h3><div>スプレッドシート側のコードが古いため、共有メンバーの登録を受け付けられません。管理者に、Apps Script を最新のコード（版5）に更新してもらってください。</div>"); return; }
+    if(S.items.length && !sampleLeft() && !confirm(`この端末のデータ（${S.items.length}台）を、共有の台帳（${p.rows}台）で置き換えます。よろしいですか？\n（必要なら「キャンセル」して、先に「データ」タブでCSVに書き出してください）`)){ $("result").innerHTML=""; return; }
+    clearTimeout(syTimer);
+    SY={url:u,key:"",member:true,name:SY.name||"",dirty:false,lastOk:null,lastErr:"",ver:p.ver}; sySave();
+    const r=await restoreNow(true);
+    if(!SY.lastOk){ SY=prev; sySave(); renderAll(); showResult("ng",`<h3>台帳を読み込めませんでした</h3><div>${esc(r)}</div>`); return; }
+    const name=prompt("あなたの名前を入れてください（履歴に残ります。あとで「データ」タブで変えられます）",SY.name||"");
+    if(name!==null){ SY.name=String(name).trim().slice(0,30); sySave(); }
+    renderAll();
+    showResult("ok",`<h3>共有の台帳に参加しました</h3><div>${S.items.length} 台を読み込みました。読み取り・登録した内容は、自動でスプレッドシートに送られます。</div><div class="muted">ホーム画面に追加して使うときは、この画面のまま、共有ボタン →「ホーム画面に追加」を選んでください。</div>`);
+  }finally{ joinBusy=false; }
+}
+
 let updCheckedAt=0;
 async function checkUpdate(force){
   try{
@@ -1535,15 +1654,15 @@ async function checkUpdate(force){
     updCheckedAt=Date.now();
     const res=await fetch("version.json?t="+Date.now(),{cache:"no-store"}); if(!res.ok) return;
     const j=await res.json(); if(!j||!j.build||j.build===BUILD) return;
-    if(camOn||ocrBusy) return;   // 読み取り中は、開き直さない
+    if(camOn||ocrBusy||joinBusy) return;   // 読み取り中・参加の手続き中は、開き直さない
     const key="pc_inventory_upd_"+j.build; let tried=false;
     try{ tried=sessionStorage.getItem(key)==="1"; }catch(e){}
-    if(!tried){ try{ sessionStorage.setItem(key,"1"); }catch(e){} location.replace(location.pathname+"?v="+encodeURIComponent(j.build)); return; }
+    if(!tried){ try{ sessionStorage.setItem(key,"1"); }catch(e){} location.replace(location.pathname+"?v="+encodeURIComponent(j.build)+location.hash); return; }   // 「#s=」（共有リンク）は残す
     // 開き直しても古いままの場合は、手動で更新するための帯を出す
     if(!$("updBar")){
       const b=document.createElement("div"); b.id="updBar"; b.className="banner backup"; b.style.cursor="pointer";
       b.textContent="新しい版があります。ここをタップして更新してください。";
-      b.addEventListener("click",()=>{ location.replace(location.pathname+"?v="+encodeURIComponent(j.build)+"&r="+Date.now()); });
+      b.addEventListener("click",()=>{ location.replace(location.pathname+"?v="+encodeURIComponent(j.build)+"&r="+Date.now()+location.hash); });
       document.querySelector(".wrap").prepend(b);
     }
   }catch(e){}
@@ -1553,9 +1672,10 @@ document.addEventListener("visibilitychange",()=>{ if(!document.hidden) checkUpd
 /* ---------- 起動 ---------- */
 renderAll();
 setMode("lookup");
-if(SY.dirty || (syncOn() && v3() && SY.lastOk)) pushNow();   // 前回送れなかった分の再送。版3では、ほかの端末（閲覧画面・8F）の変更も取り込む
+const joinPending=needJoin();   // 共有リンクで開いた（まだ参加していない）：参加の手続きで台帳を読み込むので、先に送らない
+if(!joinPending && (SY.dirty || (syncOn() && v3() && SY.lastOk))) pushNow();   // 前回送れなかった分の再送。版3では、ほかの端末（閲覧画面・8F）の変更も取り込む
 setInterval(()=>{ if(!document.hidden && syncOn() && v3() && SY.lastOk && !syBusy && Date.now()-new Date(SY.lastOk).getTime()>120000) pushNow(); },30000);   // 開いている間は2分ごと
-checkUpdate(true);
+if(joinPending) joinFromLink().then(()=>checkUpdate(true)); else checkUpdate(true);
 </script>
 </body>
 </html>
