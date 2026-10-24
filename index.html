@@ -63,6 +63,7 @@ input[type=text],input[type=search],select,textarea{font:inherit;padding:6px 10p
 .result.ng{border-color:var(--ng);background:var(--ng-bg)}
 .result h3{margin:0 0 4px;font-size:16px}
 .tagbig{font-family:Consolas,monospace;font-size:20px;font-weight:700;letter-spacing:.08em}
+input[type=text].tagedit{font-family:Consolas,monospace;font-size:20px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;max-width:15em}   /* 直せるサービスタグの欄 */
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px}
 .formgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:8px}
 .formgrid label{font-size:12px;color:var(--sub);display:flex;flex-direction:column;gap:2px}
@@ -605,8 +606,25 @@ function flushBulkMemo(){   // 入力途中のメモがあれば、次の操作�
   if($("bmBox")){ const v=pickVal("bmBox"); if(v) applyBulkMemo(v); }
   bulkLast=null;
 }
-function handleScan(tag){
+/* 直せるサービスタグの欄（文字の読み取りは読み間違えることがあるため、選んだ後も直せるようにする） */
+function tagFixInput(tag){ return `<input type="text" id="fixTag" class="tagedit" value="${esc(tag)}" autocapitalize="characters" autocomplete="off" spellcheck="false">`; }
+/* 文字の読み取りで選んだタグ：すぐに登録・移動・確認する作業では、先に確かめる画面を出す（ここで直せる） */
+function showTagConfirm(tag){
+  const kind=(document.querySelector('input[name=mvk]:checked')||{}).value||"出庫";
+  const go={bulk:"この番号で入荷登録する",move:`この番号で${kind}する`,stocktake:"この番号で棚卸の確認をする"}[mode];
+  showResult("warn",`<h3>読み取ったサービスタグを確かめてください</h3>
+    <div class="muted">文字の読み取りは、読み間違えることがあります。実物のラベルと見比べて、違っていれば直してから進んでください。</div>
+    ${tagFixInput(tag)}
+    <div class="row"><button class="primary" data-act="fixTagGo">${go}</button><button data-act="dismiss">やめる</button></div>`);
+}
+$("result").addEventListener("keydown",e=>{   // 直す欄で Enter（改行）を押したら、進むボタンと同じ
+  if(e.target.id!=="fixTag"||e.key!=="Enter") return;
+  e.preventDefault(); const b=$("result").querySelector('[data-act="fixTagGo"]'); if(b) b.click();
+});
+/* fromOcr：文字の読み取りの候補から選んだタグ */
+function handleScan(tag,fromOcr){
   flushBulkMemo();
+  if(fromOcr && mode!=="lookup"){ showTagConfirm(tag); return; }
   const it=find(tag);
   const hint=tagHint(tag);
   if(mode==="stocktake"){
@@ -658,8 +676,8 @@ function handleScan(tag){
     return;
   }
   // lookup
-  if(it){ beep(true); showItem(it); }
-  else { beep(false); showUnknown(tag,false,hint); }
+  if(it){ beep(true); showItem(it,fromOcr); }
+  else { beep(false); showUnknown(tag,false,hint,fromOcr); }
 }
 
 function showResult(kind,html){ $("result").innerHTML=`<div class="result ${kind}">${html}</div>`; revealResult(); }
@@ -681,22 +699,23 @@ function revealResult(){
   });
 }
 
-function showItem(it){
+function showItem(it,fromOcr){
   const btns = STATUS.filter(s=>s!==it.status).map(s=>`<button data-act="status" data-tag="${esc(it.tag)}" data-st="${s}">${s}にする</button>`).join("");
   showResult("ok",`<h3>登録済みの機器</h3>
     <div class="tagbig">${esc(it.tag)}</div>
     <div>${esc(it.model)} ／ ${badge(it.status)} ／ ${esc(it.loc||"場所未設定")}${it.shelf?` ／ 棚番：${esc(it.shelf)}`:""}${it.memo?` ／ メモ：${esc(it.memo)}`:""}</div>
     <div class="muted">最終更新 ${fmt(it.updated)}</div>
-    <div class="row">${btns}<button data-act="edit" data-tag="${esc(it.tag)}">詳細編集</button></div>`);
+    <div class="row">${btns}<button data-act="edit" data-tag="${esc(it.tag)}">詳細編集</button></div>
+    ${fromOcr?`<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--line)"><div class="muted">文字の読み取り結果です。実物のサービスタグと違うときは、直して調べ直せます。</div>${tagFixInput(it.tag)}<div class="row"><button data-act="fixTagGo">このタグで調べ直す</button></div></div>`:""}`);
 }
 
-function showUnknown(tag,fromStocktake,hint){
+function showUnknown(tag,fromStocktake,hint,fromOcr){
   const models=[...new Set(S.items.map(i=>i.model))];
   showResult(fromStocktake?"ng":"warn",`<h3>${fromStocktake?"台帳にないタグです（棚卸）":"未登録のタグです。登録しますか？"}</h3>
-    <div class="tagbig">${esc(tag)}</div>
     ${hint?`<div class="muted">${esc(hint)}</div>`:""}
     <form id="newForm" data-tag="${esc(tag)}" data-st="${fromStocktake?1:0}">
       <div class="formgrid">
+        <label class="full">サービスタグ${fromOcr?"（文字の読み取り結果です。実物と見比べて、違っていれば直してください）":"（違っていれば直せます）"}<input type="text" id="nfTag" class="tagedit" value="${esc(tag)}" autocapitalize="characters" autocomplete="off" spellcheck="false"></label>
         <label class="full">機種<span class="pickbox" id="nfModelBox" data-list="model" data-ph="例：Dell Latitude 5440"></span></label>
         <label>状態<select id="nfStatus">${STATUS.map(s=>`<option>${s}</option>`).join("")}</select></label>
         <label>保管場所／使用者<span class="pickbox" id="nfLocBox" data-list="loc" data-ph="場所・使用者を入力"></span></label>
@@ -724,7 +743,9 @@ function addItem({tag,model,status,loc,shelf,memo}){
 $("result").addEventListener("submit",e=>{
   if(e.target.id!=="newForm") return;
   e.preventDefault();
-  const f=e.target, tag=f.dataset.tag;
+  const f=e.target, rt=smartTag($("nfTag")?$("nfTag").value:f.dataset.tag), tag=rt.tag;
+  if(!tag){ alert(rt.err||(rt.choices?"サービスタグを1つだけ入れてください。":"サービスタグを入れてください。")); return; }
+  if(find(tag)){ alert(`「${tag}」は、すでに登録されています。登録済みの内容を表示します。`); beep(false); showItem(find(tag)); return; }   // 直したタグが登録済みだったとき
   const model=pickVal("nfModelBox");
   if(!model){ alert("機種を選ぶか、入力してください。"); return; }
   const nfLoc=pickVal("nfLocBox"), nfShelf=pickVal("nfShelfBox"), nfMemo=pickVal("nfMemoBox");
@@ -753,7 +774,12 @@ $("result").addEventListener("click",e=>{
     showResult("warn",`<h3>取り消しました</h3><div class="tagbig">${esc(it.tag)}</div><div>${esc(it.model)} ／ ${esc(it.loc||"（場所なし）")}${it.shelf?` ／ 棚番：${esc(it.shelf)}`:""} ／ ${badge(it.status)}</div>`);
     readyNext();
   }
-  if(act==="pickTag"){ $("result").innerHTML=""; handleScan(b.dataset.tag); }
+  if(act==="pickTag"){ $("result").innerHTML=""; handleScan(b.dataset.tag,b.dataset.src==="ocr"); }
+  if(act==="fixTagGo"){   // 直したサービスタグで進む（確かめる画面・登録済みの機器の調べ直し）
+    const r=smartTag($("fixTag").value);
+    if(!r.tag){ alert(r.err||(r.choices?"サービスタグを1つだけ入れてください。":"サービスタグを入れてください。")); return; }
+    $("result").innerHTML=""; handleScan(r.tag);
+  }
   if(act==="ocrGo") ocrSelGo(false);
   if(act==="ocrAll") ocrSelGo(true);
   if(act==="ocrZoom") ocrSelZoom();
@@ -1522,8 +1548,8 @@ async function ocrRunCanvas(src){
       beep(true);
       const top=clusters.slice(0,6);
       showResult("ok",`<h3>🔤 サービスタグの候補</h3>
-        <div class="muted">タップすると、その候補で照会・登録に進みます。<b>実物のラベルと見比べてください</b>（0とO、1とI、5とSなどは読み間違いやすい文字です）。</div>
-        ${top.map(c=>`<div class="row"><button class="primary" data-act="pickTag" data-tag="${esc(c.tag)}">${esc(c.tag)}</button><span class="muted">${c.n>=2?`${c.n}回の読み取りが一致`:"1回だけ読み取れた（精度低め）"}</span><button class="sm" data-act="ocrEdit" data-tag="${esc(c.tag)}">入力欄で直す</button></div>`).join("")}
+        <div class="muted">タップすると、その候補で次に進みます（選んだ後も、サービスタグは直せます）。<b>実物のラベルと見比べてください</b>（0とO、1とI、5とSなどは読み間違いやすい文字です）。</div>
+        ${top.map(c=>`<div class="row"><button class="primary" data-act="pickTag" data-src="ocr" data-tag="${esc(c.tag)}">${esc(c.tag)}</button><span class="muted">${c.n>=2?`${c.n}回の読み取りが一致`:"1回だけ読み取れた（精度低め）"}</span><button class="sm" data-act="ocrEdit" data-tag="${esc(c.tag)}">入力欄で直す</button></div>`).join("")}
         <details style="margin-top:8px"><summary class="muted">最後に読み取れた全文字を見る</summary><div class="muted" style="word-break:break-all">${esc(lastText.slice(0,300))}</div></details>`);
       return;
     }
@@ -1632,7 +1658,7 @@ $("ocrFile").addEventListener("change",e=>{ const f=e.target.files[0]; e.target.
    iPhoneのホーム画面アプリは、公開した新しい版を取り込まず、古いページを使い続けることがある（保存期間は10分）。
    起動時とアプリに戻ったときに version.json を確認し、版が違えば、URLに「?v=版番号」を付けて開き直す。
    データ（端末内の保存）は、URLが変わっても消えない。BUILD は公開時に書き換える（開発中は "dev" で、確認しない） */
-const BUILD="20261024-134124";
+const BUILD="20261024-144110";
 /* ---------- 共有リンクで参加（共有メンバー） ----------
    アドレスの「#s=」に、スプレッドシートの接続先が入っている（合言葉は使わない）。
    ホーム画面に追加したときも参加できるよう、アドレスの「#s=」は消さない（参加済みなら、何もしない） */
